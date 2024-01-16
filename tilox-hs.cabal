@@ -12,7 +12,7 @@ synopsis: A toy toy interpreter for LOX in Haskell
 -- bug-reports:
 
 -- The license under which the package is released.
-license:            GPL-3
+license:            GPL-3.0-or-later
 license-file:       LICENSE
 author:             hehelego
 maintainer:         hahalegao@gmail.com
