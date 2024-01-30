@@ -96,7 +96,8 @@ failedScan msg = Left $ ScanErr msg
 
 -- Give the (location, input character)
 -- 1. Continue scanning, or 2. Stop with (error | token)
-newtype Scan = Scan {scanFn :: CodeLoc -> Input -> Either ScanRes Scan}
+type ScanFn = CodeLoc -> Input -> Either ScanRes Scan
+newtype Scan = Scan {scanFn :: ScanFn}
 
 -- basically the state monad
 data Scanner = Scanner {state :: CodeLoc, trans :: Scan}
@@ -125,7 +126,7 @@ start = Scanner {state = CodeLoc 0 0, trans = beginScan}
 beginScan :: Scan
 beginScan = Scan beginS
 
-beginS :: CodeLoc -> Input -> Either ScanRes Scan
+beginS :: ScanFn
 beginS loc Stop = Left $ Right []
 beginS loc (Feed ch)
   -- a single char symbol
@@ -153,7 +154,7 @@ beginS loc (Feed ch)
   -- white spaces
   | isSpace ch = skip
   -- an identifier or a keyword
-  | isAlpha ch || ch == '_' = Right $ identKwScan loc [ch]
+  | isAlpha ch || ch == '_' = Right $ identKwScan loc loc [ch]
   -- a unrecognized character
   | otherwise = Left $ failedScan ("unrecognized character: " ++ [ch] ++ " at " ++ show loc)
   where
@@ -165,7 +166,7 @@ beginS loc (Feed ch)
 stringScan :: CodeLoc -> String -> Scan
 stringScan leftLoc acc = Scan $ stringS acc
   where
-    stringS :: String -> CodeLoc -> Input -> Either ScanRes Scan
+    stringS :: String -> ScanFn
     stringS acc loc Stop = Left $ failedScan ("unexpected EOF while parsing a string starting at " ++ show loc)
     stringS acc loc (Feed ch) =
       Right $
@@ -176,22 +177,22 @@ stringScan leftLoc acc = Scan $ stringS acc
 numScan :: CodeLoc -> String -> Scan
 numScan leftLoc acc = Scan $ numS acc
   where
-    numS :: String -> CodeLoc -> Input -> Either ScanRes Scan
+    numS :: String -> ScanFn
     numS acc loc Stop = Left $ Right [token acc leftLoc loc NUMBER]
     numS acc loc (Feed ch) =
       if isDigit ch
         then Right $ numScan leftLoc (append acc ch)
         else prependToken (token acc leftLoc loc NUMBER) $ scanFn beginScan loc (Feed ch)
 
-identKwScan :: CodeLoc -> String -> Scan
-identKwScan leftLoc acc = Scan $ idkwS acc
+identKwScan :: CodeLoc -> CodeLoc -> String -> Scan
+identKwScan leftLoc lastLoc acc = Scan $ idkwS acc lastLoc
   where
-    idkwS :: String -> CodeLoc -> Input -> Either ScanRes Scan
-    idkwS acc loc Stop = Left $ Right [token acc leftLoc loc (kwidType acc)]
-    idkwS acc loc (Feed ch) =
+    idkwS :: String -> CodeLoc -> ScanFn
+    idkwS acc lastLoc loc Stop = Left $ Right [token acc leftLoc lastLoc (kwidType acc)]
+    idkwS acc lastLoc loc (Feed ch) =
       if isAlpha ch
-        then Right $ identKwScan leftLoc (append acc ch)
-        else prependToken (token acc leftLoc loc $ kwidType acc) $ scanFn beginScan loc (Feed ch)
+        then Right $ identKwScan leftLoc loc (append acc ch)
+        else prependToken (token acc leftLoc lastLoc $ kwidType acc) $ scanFn beginScan loc (Feed ch)
 
 lookAhead :: (Input -> Bool) -> Scan -> Scan -> Scan
 lookAhead cond continue fallback = Scan $ \loc ch ->
