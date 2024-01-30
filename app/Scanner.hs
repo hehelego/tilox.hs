@@ -116,7 +116,7 @@ scan scanner = foldl step (Right scanner)
 
 stop :: Scanner -> ScanRes
 stop (Scanner state trans) = case scanFn trans state Stop of
-  Left r -> (token "" state state EOF :) <$> r
+  Left r -> (++ [token "" state state EOF]) <$> r
   Right _ -> Left $ ScanErr "scanning cannot be terminated by EOF"
 
 start :: Scanner
