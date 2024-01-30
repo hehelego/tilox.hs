@@ -150,7 +150,7 @@ beginS loc (Feed ch)
   -- a string
   | ch == '"' = Right $ stringScan loc ""
   -- a number
-  | isDigit ch = Right $ numScan loc [ch]
+  | isDigit ch = Right $ numScan loc loc [ch]
   -- white spaces
   | isSpace ch = skip
   -- an identifier or a keyword
@@ -174,15 +174,16 @@ stringScan leftLoc acc = Scan $ stringS acc
           then stringScan leftLoc (append acc ch)
           else pushToken (token (quote acc) leftLoc loc STRING) beginScan
 
-numScan :: CodeLoc -> String -> Scan
-numScan leftLoc acc = Scan $ numS acc
+-- TODO: allow floating point number
+numScan :: CodeLoc -> CodeLoc -> String -> Scan
+numScan leftLoc lastLoc acc = Scan $ numS acc lastLoc
   where
-    numS :: String -> ScanFn
-    numS acc loc Stop = Left $ Right [token acc leftLoc loc NUMBER]
-    numS acc loc (Feed ch) =
+    numS :: String -> CodeLoc -> ScanFn
+    numS acc lastLoc loc Stop = Left $ Right [token acc leftLoc lastLoc NUMBER]
+    numS acc lastLoc loc (Feed ch) =
       if isDigit ch
-        then Right $ numScan leftLoc (append acc ch)
-        else prependToken (token acc leftLoc loc NUMBER) $ scanFn beginScan loc (Feed ch)
+        then Right $ numScan leftLoc loc (append acc ch)
+        else prependToken (token acc leftLoc lastLoc NUMBER) $ scanFn beginScan loc (Feed ch)
 
 identKwScan :: CodeLoc -> CodeLoc -> String -> Scan
 identKwScan leftLoc lastLoc acc = Scan $ idkwS acc lastLoc
