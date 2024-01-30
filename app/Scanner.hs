@@ -178,23 +178,19 @@ numScan leftLoc acc = Scan $ numS acc
   where
     numS :: String -> CodeLoc -> Input -> Either ScanRes Scan
     numS acc loc Stop = Left $ Right [token acc leftLoc loc NUMBER]
-    numS acc loc (Feed ch) = Right $ lookAhead isDigit' contNumScan beginScan
-    contNumScan = Scan $ \loc ch -> let Feed ch' = ch in Right $ numScan leftLoc (append acc ch')
-    isDigit' Stop = False
-    isDigit' (Feed ch) = isDigit ch
+    numS acc loc (Feed ch) =
+      if isDigit ch
+        then Right $ numScan leftLoc (append acc ch)
+        else prependToken (token acc leftLoc loc NUMBER) $ scanFn beginScan loc (Feed ch)
 
 identKwScan :: CodeLoc -> String -> Scan
 identKwScan leftLoc acc = Scan $ idkwS acc
   where
     idkwS :: String -> CodeLoc -> Input -> Either ScanRes Scan
     idkwS acc loc Stop = Left $ Right [token acc leftLoc loc (kwidType acc)]
-    idkwS acc loc (Feed ch) = Right $ lookAhead isAlpha' contIdkwScan beginScan
-    contIdkwScan = Scan $ \loc ch -> let Feed ch' = ch in Right $ identKwScan leftLoc (append acc ch')
-    isAlpha' Stop = False
-    isAlpha' (Feed ch) = isAlpha ch
-
--- FIXME: Wait, this is not correct.
--- if lookAhead failed, we should output and continue scan with beginScan
+    idkwS acc loc (Feed ch) = if isAlpha ch
+      then Right $ identKwScan leftLoc (append acc ch)
+      else prependToken (token acc leftLoc loc $ kwidType acc) $ scanFn beginScan loc (Feed ch)
 
 lookAhead :: (Input -> Bool) -> Scan -> Scan -> Scan
 lookAhead cond continue fallback = Scan $ \loc ch ->
@@ -208,14 +204,6 @@ skipUntil :: (Input -> Bool) -> Scan -> Scan
 skipUntil cond next = Scan $ \loc ch ->
   if cond ch
     then scanFn next loc ch
-    else Right $ skipUntil cond next
-
--- skip input characters, until the condition is met.
--- resume scanning scan from the character next to the first character that satisfies the condition
-skipUntil' :: (Input -> Bool) -> Scan -> Scan
-skipUntil' cond next = Scan $ \loc ch ->
-  if cond ch
-    then Right next
     else Right $ skipUntil cond next
 
 pushToken :: Token -> Scan -> Scan
