@@ -1,7 +1,8 @@
 module Main where
 
+import Control.Monad (forM_)
+import qualified Scanner
 import System.Environment (getArgs)
-import System.Exit
 import System.IO
 
 main :: IO ()
@@ -16,6 +17,12 @@ exec source = undefined
 
 repl :: IO ()
 repl = do
+  putStr "> "
+  hFlush stdout
   r <- getLine
-  putStrLn $ "> " ++ r
+  case Scanner.scan Scanner.start r of
+    Right sc' -> case Scanner.stop sc' of
+      Left err -> putStrLn $ "ERROR: " ++ show err
+      Right tokens -> forM_ tokens print
+    Left err -> putStrLn $ "ERROR: " ++ show err
   repl
