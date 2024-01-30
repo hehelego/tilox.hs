@@ -1,4 +1,4 @@
-module Scanner (start, stop) where
+module Scanner (start, scan, stop) where
 
 import Control.Monad (foldM)
 import Data.Char (isAlpha, isDigit, isSpace)
@@ -145,7 +145,7 @@ beginS loc (Feed ch)
   | ch == '<' = push2 '=' LESS_EQUAL LESS
   | ch == '>' = push2 '=' GREATER_EQUAL GREATER
   -- the start of a comment line or a division symbol
-  | ch == '/' = Right $ lookAhead (== Feed '/') (skipUntil (== Feed '\n') beginScan) (push' SLASH beginScan)
+  | ch == '/' = Right $ lookAhead (== Feed '/') (skipUntil (`elem` [Feed '\n', Stop]) beginScan) (push' SLASH beginScan)
   -- a string
   | ch == '"' = Right $ stringScan loc ""
   -- a number
@@ -188,9 +188,10 @@ identKwScan leftLoc acc = Scan $ idkwS acc
   where
     idkwS :: String -> CodeLoc -> Input -> Either ScanRes Scan
     idkwS acc loc Stop = Left $ Right [token acc leftLoc loc (kwidType acc)]
-    idkwS acc loc (Feed ch) = if isAlpha ch
-      then Right $ identKwScan leftLoc (append acc ch)
-      else prependToken (token acc leftLoc loc $ kwidType acc) $ scanFn beginScan loc (Feed ch)
+    idkwS acc loc (Feed ch) =
+      if isAlpha ch
+        then Right $ identKwScan leftLoc (append acc ch)
+        else prependToken (token acc leftLoc loc $ kwidType acc) $ scanFn beginScan loc (Feed ch)
 
 lookAhead :: (Input -> Bool) -> Scan -> Scan -> Scan
 lookAhead cond continue fallback = Scan $ \loc ch ->
@@ -218,8 +219,8 @@ token :: String -> CodeLoc -> CodeLoc -> Type -> Token
 token raw posL posR = Token raw rng where rng = CodeRng posL posR
 
 nextLoc :: CodeLoc -> Char -> CodeLoc
-nextLoc (CodeLoc ln col) '\n' = CodeLoc ln (col + 1)
-nextLoc (CodeLoc ln col) _ = CodeLoc (ln + 1) col
+nextLoc (CodeLoc ln col) '\n' = CodeLoc (ln + 1) col
+nextLoc (CodeLoc ln col) _ = CodeLoc ln (col + 1)
 
 quote :: String -> String
 quote s = '"' : s ++ ['"']
