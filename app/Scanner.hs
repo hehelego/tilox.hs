@@ -161,6 +161,8 @@ beginS loc (Feed ch)
     skip = Right beginScan
     push' tokType = pushToken (token [ch] loc loc tokType)
     push1 tokType = Right $ push' tokType beginScan
+    -- FIXME: 2-char token range is not correctly handled, try parsing ==
+    -- FIXME: on lookAhead matched, should skip a character before going back to beginScan
     push2 ch matched failed = Right $ lookAhead (== Feed ch) (push' matched beginScan) (push' failed beginScan)
 
 stringScan :: CodeLoc -> String -> Scan
