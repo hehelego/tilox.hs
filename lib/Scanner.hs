@@ -75,8 +75,8 @@ char2symbols :: [(String, Type)]
 char2symbols =
   [ ("!=", BANG_EQUAL),
     ("==", EQUAL_EQUAL),
-    ("<=", GREATER_EQUAL),
-    (">=", LESS_EQUAL)
+    ("<=", LESS_EQUAL),
+    (">=", GREATER_EQUAL)
   ]
 
 keywords :: [(String, Type)]
