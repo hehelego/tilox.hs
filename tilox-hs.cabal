@@ -1,4 +1,4 @@
-cabal-version:      2.4
+cabal-version:      3.0
 name:               tilox-hs
 version:            0.1.0.0
 
@@ -6,7 +6,7 @@ version:            0.1.0.0
 synopsis: A toy toy interpreter for LOX in Haskell 
 
 -- A longer description of the package.
--- description:
+description: A Haskell re-implementation of the LOX programming language in the craftinginterpreters book, containing the scanner, parser, interpreter, and compiler for the LOX.
 
 -- A URL where users can report bugs.
 -- bug-reports:
@@ -19,19 +19,25 @@ maintainer:         hahalegao@gmail.com
 
 -- A copyright notice.
 -- copyright:
--- category:
+category: Compilers/Interpreters
 extra-source-files:
     CHANGELOG.md
     README.md
+
+library
+    exposed-modules:  Scanner Parser NaiveEval
+    build-depends:    base >= 4 && < 5
+    hs-source-dirs:   lib
+    default-language: Haskell2010
 
 executable tilox-hs
     main-is:          Main.hs
 
     -- Modules included in this executable, other than Main.
-    other-modules: Scanner Parser NaiveEval
+    other-modules:
 
     -- LANGUAGE extensions used by modules in this package.
     -- other-extensions:
-    build-depends:    base ^>=4.17.2.0
+    build-depends:    base >= 4 && < 5, tilox-hs
     hs-source-dirs:   app
     default-language: Haskell2010

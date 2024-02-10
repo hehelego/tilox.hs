@@ -122,6 +122,7 @@ token :: String -> CodeLoc -> CodeLoc -> Type -> Token
 token raw l r = Token raw (CodeRng l r)
 
 newtype ScanErr = ScanErr {reason :: String}
+  deriving (Show, Eq, Ord)
 
 scan :: String -> (Either ScanErr (), [Token])
 scan = flip scan' (CodeLoc 1 1)
@@ -139,8 +140,8 @@ scanOnce loc@(CodeLoc ln col) src
   | ch == '"' = scanStr loc src
   | isDigit ch = scanNum loc src
   | isAlpha ch = scanIdkw loc src
-  | isSpace ch = scanOnce loc' suf1
-  | ch == '\n' = scanOnce locnl suf1
+  | isSpace ch && ch /= '\n' = scanOnce loc' suf1
+  | ch == '\n' = trace "meet newline" $ scanOnce locnl suf1
   | pre2 == "//" = skipCmtScan loc'' suf2
   | Just symbol2 <- lookup pre2 char2symbols = (Right $ token pre2 loc loc' symbol2, (suf2, loc''))
   | Just symbol1 <- lookup pre1 char1symbols = (Right $ token pre1 loc loc symbol1, (suf1, loc'))
