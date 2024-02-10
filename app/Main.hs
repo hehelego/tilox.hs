@@ -1,6 +1,6 @@
 module Main where
 
-import Control.Monad (forM_)
+import Control.Monad (mapM_)
 import qualified Scanner
 import System.Environment (getArgs)
 import System.IO
@@ -17,12 +17,12 @@ exec source = undefined
 
 repl :: IO ()
 repl = do
-  putStr "> "
+  putStr "In> "
   hFlush stdout
   r <- getLine
-  case Scanner.scan Scanner.start r of
-    Right sc' -> case Scanner.stop sc' of
-      Left err -> putStrLn $ "ERROR: " ++ show err
-      Right tokens -> forM_ tokens print
-    Left err -> putStrLn $ "ERROR: " ++ show err
+  let (res, toks) = Scanner.scan r
+  case res of
+    Left err -> putStrLn $ "Out> ERROR: " ++ Scanner.reason err
+    _ -> putStrLn "Out> Tokenization ok."
+  mapM_ print toks
   repl
