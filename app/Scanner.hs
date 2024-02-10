@@ -1,8 +1,9 @@
-module Scanner (start, scan, stop) where
+module Scanner (Type (..), CodeLoc (..), CodeRng (..), Token (..), ScanErr (..), scan) where
 
 import Control.Monad (foldM)
-import Data.Char (isAlpha, isDigit, isSpace)
-import Data.Maybe (fromMaybe)
+import Data.Char (isAlpha, isAlphaNum, isDigit, isSpace)
+import Data.Maybe (fromMaybe, listToMaybe)
+import Debug.Trace
 
 data Type
   = -- symbols
@@ -39,6 +40,7 @@ data Type
   | FOR
   | IF
   | NIL
+  | NOT
   | OR
   | PRINT
   | RETURN
@@ -51,6 +53,32 @@ data Type
     EOF
   deriving (Show, Eq, Ord)
 
+char1symbols :: [(String, Type)]
+char1symbols =
+  [ ("(", LEFT_PAREN),
+    (")", RIGHT_PAREN),
+    ("{", LEFT_BRACE),
+    ("}", RIGHT_BRACE),
+    (",", COMMA),
+    (".", DOT),
+    ("-", MINUS),
+    ("+", PLUS),
+    (";", SEMICOLON),
+    ("/", SLASH),
+    ("*", STAR),
+    ("!", BANG),
+    ("<", LESS),
+    (">", GREATER)
+  ]
+
+char2symbols :: [(String, Type)]
+char2symbols =
+  [ ("!=", BANG_EQUAL),
+    ("==", EQUAL_EQUAL),
+    ("<=", GREATER_EQUAL),
+    (">=", LESS_EQUAL)
+  ]
+
 keywords :: [(String, Type)]
 keywords =
   [ ("and", AND),
@@ -61,6 +89,7 @@ keywords =
     ("fun", FUN),
     ("if", IF),
     ("nil", NIL),
+    ("not", NOT),
     ("or", OR),
     ("print", PRINT),
     ("return", RETURN),
@@ -75,159 +104,92 @@ kwidType :: String -> Type
 kwidType raw = fromMaybe IDENTIFIER (lookup raw keywords)
 
 data CodeLoc = CodeLoc Int Int
-  deriving (Show, Eq, Ord)
+  deriving (Eq, Ord)
+
+instance Show CodeLoc where
+  show (CodeLoc ln col) = show ln ++ ":" ++ show col
 
 data CodeRng = CodeRng CodeLoc CodeLoc
-  deriving (Show, Eq, Ord)
+  deriving (Eq, Ord)
+
+instance Show CodeRng where
+  show (CodeRng l r) = "[" ++ show l ++ " to " ++ show r ++ "]"
 
 data Token = Token {tokRaw :: String, tokRng :: CodeRng, tokType :: Type}
   deriving (Show, Eq, Ord)
 
-data Input = Feed Char | Stop
-  deriving (Show, Eq, Ord)
-
-newtype ScanErr = ScanErr {errReason :: String}
-  deriving (Show, Eq, Ord)
-
-type ScanRes = Either ScanErr [Token]
-
-failedScan :: String -> ScanRes
-failedScan msg = Left $ ScanErr msg
-
--- Give the (location, input character)
--- 1. Continue scanning, or 2. Stop with (error | token)
-type ScanFn = CodeLoc -> Input -> Either ScanRes Scan
-newtype Scan = Scan {scanFn :: ScanFn}
-
--- basically the state monad
-data Scanner = Scanner {state :: CodeLoc, trans :: Scan}
-
-scanStep :: Scanner -> Char -> Either ScanRes Scanner
-scanStep (Scanner state trans) ch = case scanFn trans state (Feed ch) of
-  Left res -> Left res
-  Right trans' -> Right $ Scanner state' trans'
-    where
-      state' = nextLoc state ch
-
-scan :: Scanner -> String -> Either ScanRes Scanner
-scan scanner = foldl step (Right scanner)
-  where
-    step (Right scanner) ch = scanStep scanner ch
-    step x _ = x
-
-stop :: Scanner -> ScanRes
-stop (Scanner state trans) = case scanFn trans state Stop of
-  Left r -> (++ [token "" state state EOF]) <$> r
-  Right _ -> Left $ ScanErr "scanning cannot be terminated by EOF"
-
-start :: Scanner
-start = Scanner {state = CodeLoc 0 0, trans = beginScan}
-
-beginScan :: Scan
-beginScan = Scan beginS
-
-beginS :: ScanFn
-beginS loc Stop = Left $ Right []
-beginS loc (Feed ch)
-  -- a single char symbol
-  | ch == '(' = push1 LEFT_PAREN
-  | ch == ')' = push1 RIGHT_PAREN
-  | ch == '{' = push1 LEFT_BRACE
-  | ch == '}' = push1 RIGHT_BRACE
-  | ch == ',' = push1 COMMA
-  | ch == '.' = push1 DOT
-  | ch == '-' = push1 MINUS
-  | ch == '+' = push1 PLUS
-  | ch == ';' = push1 SEMICOLON
-  | ch == '*' = push1 STAR
-  -- a double char symbol
-  | ch == '!' = push2 '=' BANG_EQUAL BANG
-  | ch == '=' = push2 '=' EQUAL_EQUAL EQUAL
-  | ch == '<' = push2 '=' LESS_EQUAL LESS
-  | ch == '>' = push2 '=' GREATER_EQUAL GREATER
-  -- the start of a comment line or a division symbol
-  | ch == '/' = Right $ lookAhead (== Feed '/') (skipUntil (`elem` [Feed '\n', Stop]) beginScan) (push' SLASH beginScan)
-  -- a string
-  | ch == '"' = Right $ stringScan loc ""
-  -- a number
-  | isDigit ch = Right $ numScan loc loc [ch]
-  -- white spaces
-  | isSpace ch = skip
-  -- an identifier or a keyword
-  | isAlpha ch || ch == '_' = Right $ identKwScan loc loc [ch]
-  -- a unrecognized character
-  | otherwise = Left $ failedScan ("unrecognized character: " ++ [ch] ++ " at " ++ show loc)
-  where
-    skip = Right beginScan
-    push' tokType = pushToken (token [ch] loc loc tokType)
-    push1 tokType = Right $ push' tokType beginScan
-    -- FIXME: 2-char token range is not correctly handled, try parsing ==
-    -- FIXME: on lookAhead matched, should skip a character before going back to beginScan
-    push2 ch matched failed = Right $ lookAhead (== Feed ch) (push' matched beginScan) (push' failed beginScan)
-
-stringScan :: CodeLoc -> String -> Scan
-stringScan leftLoc acc = Scan $ stringS acc
-  where
-    stringS :: String -> ScanFn
-    stringS acc loc Stop = Left $ failedScan ("unexpected EOF while parsing a string starting at " ++ show loc)
-    stringS acc loc (Feed ch) =
-      Right $
-        if ch /= '"'
-          then stringScan leftLoc (append acc ch)
-          else pushToken (token (quote acc) leftLoc loc STRING) beginScan
-
--- TODO: allow floating point number
-numScan :: CodeLoc -> CodeLoc -> String -> Scan
-numScan leftLoc lastLoc acc = Scan $ numS acc lastLoc
-  where
-    numS :: String -> CodeLoc -> ScanFn
-    numS acc lastLoc loc Stop = Left $ Right [token acc leftLoc lastLoc NUMBER]
-    numS acc lastLoc loc (Feed ch) =
-      if isDigit ch
-        then Right $ numScan leftLoc loc (append acc ch)
-        else prependToken (token acc leftLoc lastLoc NUMBER) $ scanFn beginScan loc (Feed ch)
-
-identKwScan :: CodeLoc -> CodeLoc -> String -> Scan
-identKwScan leftLoc lastLoc acc = Scan $ idkwS acc lastLoc
-  where
-    idkwS :: String -> CodeLoc -> ScanFn
-    idkwS acc lastLoc loc Stop = Left $ Right [token acc leftLoc lastLoc (kwidType acc)]
-    idkwS acc lastLoc loc (Feed ch) =
-      if isAlpha ch
-        then Right $ identKwScan leftLoc loc (append acc ch)
-        else prependToken (token acc leftLoc lastLoc $ kwidType acc) $ scanFn beginScan loc (Feed ch)
-
-lookAhead :: (Input -> Bool) -> Scan -> Scan -> Scan
-lookAhead cond continue fallback = Scan $ \loc ch ->
-  if cond ch
-    then scanFn continue loc ch
-    else scanFn fallback loc ch
-
--- skip input characters, until the condition is met.
--- resume scanning from the first character that satisfies the condition
-skipUntil :: (Input -> Bool) -> Scan -> Scan
-skipUntil cond next = Scan $ \loc ch ->
-  if cond ch
-    then scanFn next loc ch
-    else Right $ skipUntil cond next
-
-pushToken :: Token -> Scan -> Scan
-pushToken token (Scan trans) = Scan $ \loc ch -> prependToken token $ trans loc ch
-
--- mutual recursion with pushToken, push a token and continue scan with another scanner
-prependToken :: Token -> Either ScanRes Scan -> Either ScanRes Scan
-prependToken token (Left res) = Left $ (token :) <$> res
-prependToken token (Right trans) = Right $ pushToken token trans
-
 token :: String -> CodeLoc -> CodeLoc -> Type -> Token
-token raw posL posR = Token raw rng where rng = CodeRng posL posR
+token raw l r = Token raw (CodeRng l r)
 
-nextLoc :: CodeLoc -> Char -> CodeLoc
-nextLoc (CodeLoc ln col) '\n' = CodeLoc (ln + 1) col
-nextLoc (CodeLoc ln col) _ = CodeLoc ln (col + 1)
+newtype ScanErr = ScanErr {reason :: String}
 
-quote :: String -> String
-quote s = '"' : s ++ ['"']
+scan :: String -> (Either ScanErr (), [Token])
+scan = flip scan' (CodeLoc 1 1)
 
-append :: String -> Char -> String
-append s ch = s ++ [ch]
+scan' str loc = case scanOnce loc str of
+  (Left (ScanErr e), (_, errloc)) -> (Left $ ScanErr $ e ++ " at " ++ show errloc, [])
+  (Right token, (rest, loc')) ->
+    if tokType token == EOF
+      then (Right (), [token])
+      else (token :) <$> scan' rest loc'
+
+scanOnce, scanStr, scanNum, scanIdkw, skipCmtScan :: CodeLoc -> String -> (Either ScanErr Token, (String, CodeLoc))
+scanOnce loc@(CodeLoc ln col) src
+  | null src = (Right $ token "" loc loc EOF, ("", loc))
+  | ch == '"' = scanStr loc src
+  | isDigit ch = scanNum loc src
+  | isAlpha ch = scanIdkw loc src
+  | isSpace ch = scanOnce loc' suf1
+  | ch == '\n' = scanOnce locnl suf1
+  | pre2 == "//" = skipCmtScan loc'' suf2
+  | Just symbol2 <- lookup pre2 char2symbols = (Right $ token pre2 loc loc' symbol2, (suf2, loc''))
+  | Just symbol1 <- lookup pre1 char1symbols = (Right $ token pre1 loc loc symbol1, (suf1, loc'))
+  | otherwise = (Left $ ScanErr "unexpected char", (src, loc))
+  where
+    (pre1, suf1) = splitAt 1 src
+    (pre2, suf2) = splitAt 2 src
+    loc' = CodeLoc ln (col + 1)
+    loc'' = CodeLoc ln (col + 2)
+    locnl = CodeLoc (ln + 1) 1
+    ch = head src
+
+-- | NOTE: the original lexical grammar of lox does not support escape sequence
+scanStr loc0@(CodeLoc ln col) ('"' : rest) = scanStr' (CodeLoc ln (col + 1)) rest ['"']
+  where
+    scanStr' :: CodeLoc -> String -> String -> (Either ScanErr Token, (String, CodeLoc))
+    scanStr' loc@(CodeLoc ln col) src acc = case src of
+      "" -> (Left $ ScanErr "unexpected EOF", (src, loc))
+      ('"' : rest) -> (Right $ token (acc ++ ['"']) loc0 loc STRING, (rest, CodeLoc ln (col + 1)))
+      ('\\' : '"' : rest) -> scanStr' (CodeLoc ln (col + 2)) rest (acc ++ ['"'])
+      ('\\' : '\\' : rest) -> scanStr' (CodeLoc ln (col + 2)) rest (acc ++ ['\\'])
+      ('\\' : 'b' : rest) -> scanStr' (CodeLoc ln (col + 2)) rest (acc ++ ['\b'])
+      ('\\' : 'f' : rest) -> scanStr' (CodeLoc ln (col + 2)) rest (acc ++ ['\f'])
+      ('\\' : 't' : rest) -> scanStr' (CodeLoc ln (col + 2)) rest (acc ++ ['\t'])
+      ('\\' : 'r' : rest) -> scanStr' (CodeLoc ln (col + 2)) rest (acc ++ ['\r'])
+      ('\\' : 'n' : rest) -> scanStr' (CodeLoc ln (col + 2)) rest (acc ++ ['\n'])
+      ('\\' : ch : rest) -> (Left $ ScanErr $ "cannot escape " ++ [ch], (rest, loc))
+      ('\n' : rest) -> scanStr' (CodeLoc (ln + 1) 1) rest (acc ++ ['\n'])
+      (ch : rest) -> scanStr' (CodeLoc ln (col + 1)) rest (acc ++ [ch])
+
+scanNum loc@(CodeLoc ln col) src = (Right $ token raw loc loc' NUMBER, (rest', loc''))
+  where
+    (intPart, rest) = span isDigit src
+    (decPart, rest') =
+      if listToMaybe rest == Just '.'
+        then (\(x, y) -> ('.' : x, y)) $ span isDigit (tail rest)
+        else ("", rest)
+    raw = if null decPart then intPart else intPart ++ decPart
+    loc' = CodeLoc ln (col + length raw - 1)
+    loc'' = CodeLoc ln (col + length raw)
+
+scanIdkw loc@(CodeLoc ln col) src = (Right $ token raw loc loc' toktp, (rest, loc''))
+  where
+    (raw, rest) = span isAlphaNum src
+    loc' = CodeLoc ln (col + length raw - 1)
+    loc'' = CodeLoc ln (col + length raw)
+    toktp = kwidType raw
+
+skipCmtScan loc@(CodeLoc ln col) src = scanOnce loc' rest
+  where
+    (raw, rest) = span (/= '\n') src
+    loc' = CodeLoc ln (col + length raw)
