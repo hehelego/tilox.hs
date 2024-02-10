@@ -25,6 +25,21 @@ main = hspec $ do
       let raw = "\"unclosed string literal" -- "unclosed string literal ends at 24, EOF 25
       scan raw `shouldBe` (Left $ ScanErr "unexpected EOF at 1:25", [])
 
+    it "find numerical tokens && math operators" $ do
+      scan "123. >= 0.5  7 < 4 + 10"
+        `shouldBe` ( Right (),
+                     [ Token "123." (crng 1 1 1 4) NUMBER,
+                       Token ">=" (crng 1 6 1 7) GREATER_EQUAL,
+                       Token "0.5" (crng 1 9 1 11) NUMBER,
+                       Token "7" (crng 1 14 1 14) NUMBER,
+                       Token "<" (crng 1 16 1 16) LESS,
+                       Token "4" (crng 1 18 1 18) NUMBER,
+                       Token "+" (crng 1 20 1 20) PLUS,
+                       Token "10" (crng 1 22 1 23) NUMBER,
+                       Token "" (crng 1 24 1 24) EOF
+                     ]
+                   )
+
     it "distinguish normal identifers and keywords && track code location" $ do
       {-
        and andd 	 not
