@@ -21,13 +21,21 @@ main = hspec $ do
       scan "_invalid" `shouldBe` (Left $ ScanErr "unexpected char at 1:1", [])
 
     it "identify string literal and escape" $ do
-      let raw = "\"\\bhe\\\"llo\\n\"" -- "\bhe\"llo\n"
+      {- "\bhe\"llo\n"
+       - ""
+       -}
+      let raw = "\"\\bhe\\\"llo\\n\"\n\"\""
       scan raw
         `shouldBe` ( Right (),
-                     [ Token "\"\bhe\"llo\n\"" (crng1 1 13) STRING,
-                       Token "" (crng1 14 14) EOF
+                     [ Token "\"\\bhe\\\"llo\\n\"" (crng1 1 13) STRING,
+                       Token "\"\"" (crng 2 1 2 2) STRING,
+                       Token "" (crng 2 3 2 3) EOF
                      ]
                    )
+
+    it "report error for unsupported escape sequence" $ do
+      let raw = "\"\\m\"" -- "\m"
+      scan raw `shouldBe` (Left $ ScanErr "cannot escape m at 1:3", [])
 
     it "give error for unclosed string" $ do
       let raw = "\"unclosed string literal" -- "unclosed string literal ends at 24, EOF 25
