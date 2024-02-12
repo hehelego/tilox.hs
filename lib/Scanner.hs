@@ -141,7 +141,7 @@ scanOnce loc@(CodeLoc ln col) src
   | isDigit ch = scanNum loc src
   | isAlpha ch = scanIdkw loc src
   | isSpace ch && ch /= '\n' = scanOnce loc' suf1
-  | ch == '\n' = trace "meet newline" $ scanOnce locnl suf1
+  | ch == '\n' = scanOnce locnl suf1
   | pre2 == "//" = skipCmtScan loc'' suf2
   | Just symbol2 <- lookup pre2 char2symbols = (Right $ token pre2 loc loc' symbol2, (suf2, loc''))
   | Just symbol1 <- lookup pre1 char1symbols = (Right $ token pre1 loc loc symbol1, (suf1, loc'))
@@ -158,19 +158,21 @@ scanOnce loc@(CodeLoc ln col) src
 scanStr loc0@(CodeLoc ln col) ('"' : rest) = scanStr' (CodeLoc ln (col + 1)) rest ['"']
   where
     scanStr' :: CodeLoc -> String -> String -> (Either ScanErr Token, (String, CodeLoc))
-    scanStr' loc@(CodeLoc ln col) src acc = case src of
-      "" -> (Left $ ScanErr "unexpected EOF", (src, loc))
-      ('"' : rest) -> (Right $ token (acc ++ ['"']) loc0 loc STRING, (rest, CodeLoc ln (col + 1)))
-      ('\\' : '"' : rest) -> scanStr' (CodeLoc ln (col + 2)) rest (acc ++ ['"'])
-      ('\\' : '\\' : rest) -> scanStr' (CodeLoc ln (col + 2)) rest (acc ++ ['\\'])
-      ('\\' : 'b' : rest) -> scanStr' (CodeLoc ln (col + 2)) rest (acc ++ ['\b'])
-      ('\\' : 'f' : rest) -> scanStr' (CodeLoc ln (col + 2)) rest (acc ++ ['\f'])
-      ('\\' : 't' : rest) -> scanStr' (CodeLoc ln (col + 2)) rest (acc ++ ['\t'])
-      ('\\' : 'r' : rest) -> scanStr' (CodeLoc ln (col + 2)) rest (acc ++ ['\r'])
-      ('\\' : 'n' : rest) -> scanStr' (CodeLoc ln (col + 2)) rest (acc ++ ['\n'])
-      ('\\' : ch : rest) -> (Left $ ScanErr $ "cannot escape " ++ [ch], (rest, loc))
-      ('\n' : rest) -> scanStr' (CodeLoc (ln + 1) 1) rest (acc ++ ['\n'])
-      (ch : rest) -> scanStr' (CodeLoc ln (col + 1)) rest (acc ++ [ch])
+    scanStr' loc@(CodeLoc ln col) src acc =
+      let loc' = CodeLoc ln (col + 1)
+          loc'' = CodeLoc ln (col + 2)
+       in case src of
+            "" -> (Left $ ScanErr "unexpected EOF", (src, loc))
+            ('"' : rest) -> (Right $ token (acc ++ ['"']) loc0 loc STRING, (rest, loc'))
+            ('\\' : '"' : rest) -> scanStr' loc'' rest (acc ++ "\\\"")
+            ('\\' : '\\' : rest) -> scanStr' loc'' rest (acc ++ "\\\\")
+            ('\\' : 'b' : rest) -> scanStr' loc'' rest (acc ++ "\\b")
+            ('\\' : 'f' : rest) -> scanStr' loc'' rest (acc ++ "\\f")
+            ('\\' : 't' : rest) -> scanStr' loc'' rest (acc ++ "\\t")
+            ('\\' : 'r' : rest) -> scanStr' loc'' rest (acc ++ "\\r")
+            ('\\' : 'n' : rest) -> scanStr' loc'' rest (acc ++ "\\n")
+            ('\\' : ch : rest) -> (Left $ ScanErr $ "cannot escape " ++ [ch], (rest, loc'))
+            (ch : rest) -> scanStr' (nextLoc ch loc) rest (acc ++ [ch])
 
 scanNum loc@(CodeLoc ln col) src = (Right $ token raw loc loc' NUMBER, (rest', loc''))
   where
@@ -194,3 +196,6 @@ skipCmtScan loc@(CodeLoc ln col) src = scanOnce loc' rest
   where
     (raw, rest) = span (/= '\n') src
     loc' = CodeLoc ln (col + length raw)
+
+nextLoc :: Char -> CodeLoc -> CodeLoc
+nextLoc ch (CodeLoc ln col) = if ch == '\n' then CodeLoc (ln + 1) 1 else CodeLoc ln (col + 1)
