@@ -23,13 +23,28 @@ main = hspec $ do
     it "identify string literal and escape" $ do
       {- "\bhe\"llo\n"
        - ""
+       - "\\ \f\t\r\n"
        -}
-      let raw = "\"\\bhe\\\"llo\\n\"\n\"\""
+      let raw = "\"\\bhe\\\"llo\\n\"\n\"\"\n\"\\\\ \\f\\t\\r\\n\""
       scan raw
         `shouldBe` ( Right (),
                      [ Token "\"\\bhe\\\"llo\\n\"" (crng1 1 13) STRING,
                        Token "\"\"" (crng 2 1 2 2) STRING,
-                       Token "" (crng 2 3 2 3) EOF
+                       Token "\"\\\\ \\f\\t\\r\\n\"" (crng 3 1 3 13) STRING,
+                       Token "" (crng 3 14 3 14) EOF
+                     ]
+                   )
+
+    it "identify string literal and escape" $ do
+      {- "
+       -
+       - a"
+       -}
+      let raw = "\"\n\na\""
+      scan raw
+        `shouldBe` ( Right (),
+                     [ Token "\"\n\na\"" (crng 1 1 3 2) STRING,
+                       Token "" (crng 3 3 3 3) EOF
                      ]
                    )
 
