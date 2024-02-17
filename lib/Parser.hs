@@ -1,3 +1,150 @@
 module Parser where
 
-data Prog = Prog
+import Data.Bifunctor (first)
+import qualified Scanner as S
+
+-- | the grammar
+-- expression     → literal | unary | binary | grouping ;
+-- literal        → NUMBER | STRING | "true" | "false" | "nil" ;
+-- grouping       → "(" expression ")" ;
+-- unary          → ( "-" | "!" ) expression ;
+-- binary         → expression operator expression ;
+-- operator       → "==" | "!=" | "<" | "<=" | ">" | ">=" | "+"  | "-"  | "*" | "/" ;
+data Expr
+  = LiteralExpr Literal
+  | UnaryExpr UnaryOp Expr
+  | BinaryExpr BinaryOp Expr Expr
+
+data Literal = Number Double | String String | Bool Bool | Nil
+
+data UnaryOp = Neg | Not
+
+data BinaryOp = Eq | Neq | Lt | Leq | Gt | Geq | Plus | Minus | Times | Divides
+
+-- | Parse an expression tree
+chainP :: Parser Expr -> Parser (Expr -> Expr -> Expr) -> Parser Expr
+chainP leaveP connP = leaveP >>= chain
+  where
+    chain lhs =
+      ( do
+          conn <- connP
+          rhs <- leaveP
+          chain $ conn lhs rhs
+      )
+        `orElse` pure lhs
+
+exprP, equalityP, compP, termP, factorP, unaryP, primaryP, numberP, stringP, boolP, nilP, groupedP :: Parser Expr
+
+-- | expression     → equality ;
+exprP = equalityP
+
+-- | equality       → comparison ( ( "!=" | "==" ) comparison )* ;
+equalityP = chainP compP $ binaryOpP [S.EQUAL_EQUAL, S.BANG_EQUAL]
+
+-- | comparison     → term ( ( ">" | ">=" | "<" | "<=" ) term )* ;
+compP = chainP termP $ binaryOpP [S.GREATER, S.GREATER_EQUAL, S.LESS, S.LESS_EQUAL]
+
+-- | term           → factor ( ( "-" | "+" ) factor )* ;
+termP = chainP factorP $ binaryOpP [S.MINUS, S.PLUS]
+
+-- | factor         → unary ( ( "/" | "*" ) unary )* ;
+factorP = chainP unaryP $ binaryOpP [S.SLASH, S.STAR]
+
+-- | unary          → ( "!" | "-" ) unary | primary ;
+unaryP = (unaryOpP <*> unaryP) `orElse` primaryP
+
+-- | primary        → NUMBER | STRING | "true" | "false" | "nil" | "(" expression ")" ;
+primaryP = numberP `orElse` stringP `orElse` boolP `orElse` nilP `orElse` groupedP
+
+literalP tp lift = do
+  token <- takeType tp ParseErr
+  pure $ LiteralExpr $ lift $ S.tokRaw token
+
+numberP = literalP S.NUMBER (Number . read)
+
+stringP = literalP S.STRING (String . read)
+
+boolP = literalP S.TRUE (Bool . read) `orElse` literalP S.FALSE (Bool . read)
+
+nilP = literalP S.NIL (const Nil)
+
+groupedP = left *> exprP <* right
+  where
+    left = takeType S.LEFT_PAREN ParseErr
+    right = takeType S.RIGHT_PAREN ParseErr
+
+data ParseErr = ParseErr
+
+newtype Parser a = Parser {runParser :: [S.Token] -> (Either ParseErr a, [S.Token])}
+
+failP :: ParseErr -> Parser a
+failP err = Parser $ \toks -> (Left err, toks)
+
+-- | A parser that only checks if a condition is hold
+checkP :: Bool -> ParseErr -> Parser ()
+checkP cond err = if cond then pure () else failP err
+
+-- | consume a token
+consume :: Parser S.Token
+consume = Parser $ \toks -> case toks of
+  (t : rest) -> (Right t, rest)
+  _ -> (Left ParseErr, toks)
+
+-- | consume a token and check if a predicate on the token type is satisfied
+takeCheck :: (S.Type -> Bool) -> ParseErr -> Parser S.Token
+takeCheck pred err = do
+  token <- consume
+  checkP (pred $ S.tokType token) err
+  pure token
+
+-- | consume a token and check if the token type matches with the provided type
+takeType :: S.Type -> ParseErr -> Parser S.Token
+takeType t = takeCheck (== t)
+
+binaryOps, unaryOps :: [S.Type]
+unaryOps = [S.MINUS, S.BANG]
+binaryOps = [S.EQUAL_EQUAL, S.BANG_EQUAL, S.LESS, S.LESS_EQUAL, S.GREATER, S.GREATER_EQUAL, S.PLUS, S.MINUS, S.STAR, S.SLASH]
+
+unaryOpP :: Parser (Expr -> Expr)
+unaryOpP = do
+  token <- takeCheck (`elem` unaryOps) ParseErr
+  pure $ UnaryExpr $ case S.tokType token of
+    S.MINUS -> Neg
+    S.BANG -> Not
+
+binaryOpP :: [S.Type] -> Parser (Expr -> Expr -> Expr)
+binaryOpP opTypes = do
+  token <- takeCheck (`elem` binaryOps) ParseErr
+  let t = S.tokType token
+  pure $ BinaryExpr $ case t of
+    S.EQUAL_EQUAL -> Eq
+    S.BANG_EQUAL -> Neq
+    S.LESS -> Lt
+    S.LESS_EQUAL -> Leq
+    S.GREATER -> Gt
+    S.GREATER_EQUAL -> Geq
+    S.PLUS -> Plus
+    S.MINUS -> Minus
+    S.STAR -> Times
+    S.SLASH -> Divides
+
+instance Functor Parser where
+  fmap f p = Parser $ \toks -> (f <$>) `first` runParser p toks
+
+instance Applicative Parser where
+  pure x = Parser $ \toks -> (Right x, toks)
+  p <*> q = Parser $ \toks -> case runParser p toks of
+    (Left e, toks') -> (Left e, toks')
+    (Right f, toks') -> runParser (f <$> q) toks'
+
+instance Monad Parser where
+  p >>= q = Parser $ \toks -> case runParser p toks of
+    (Left e, toks') -> (Left e, toks')
+    (Right x, toks') -> runParser (q x) toks'
+
+-- | Parse the input with either the first or the second parser.
+-- The second parser is provided with the entire input if the first parser fails.
+orElse :: Parser a -> Parser a -> Parser a
+p `orElse` q = Parser $ \toks -> case runParser p toks of
+  (Left e, toks') -> runParser q toks
+  (Right x, toks') -> (Right x, toks')
