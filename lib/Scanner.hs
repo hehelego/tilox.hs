@@ -1,6 +1,7 @@
 module Scanner (Type (..), CodeLoc (..), CodeRng (..), Token (..), ScanErr (..), scan) where
 
 import Control.Monad (foldM)
+import Data.Bifunctor (first)
 import Data.Char (isAlpha, isAlphaNum, isDigit, isSpace)
 import Data.Maybe (fromMaybe, listToMaybe)
 import Debug.Trace
@@ -179,7 +180,7 @@ scanNum loc@(CodeLoc ln col) src = (Right $ token raw loc loc' NUMBER, (rest', l
     (intPart, rest) = span isDigit src
     (decPart, rest') =
       if listToMaybe rest == Just '.'
-        then (\(x, y) -> ('.' : x, y)) $ span isDigit (tail rest)
+        then ('.' :) `first` span isDigit (tail rest)
         else ("", rest)
     raw = if null decPart then intPart else intPart ++ decPart
     loc' = CodeLoc ln (col + length raw - 1)
