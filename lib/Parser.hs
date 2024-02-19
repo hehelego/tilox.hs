@@ -134,7 +134,7 @@ unaryOpP = do
 
 binaryOpP :: [S.Type] -> Parser (Expr -> Expr -> Expr)
 binaryOpP opTypes = do
-  token <- takeCheck (`elem` binaryOps) "expecting a binary operator token"
+  token <- takeCheck (`elem` opTypes) "expecting a binary operator token"
   let t = S.tokType token
   pure $ BinaryExpr $ case t of
     S.EQUAL_EQUAL -> Eq
