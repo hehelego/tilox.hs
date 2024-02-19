@@ -99,7 +99,9 @@ primaryP = numberP `orElse` stringP `orElse` boolP `orElse` nilP `orElse` groupe
 
 literalP tp lift = LiteralExpr . lift . S.tokRaw <$> takeType tp
 
-numberP = literalP S.NUMBER (Number . read)
+numberP = literalP S.NUMBER (Number . read . fix)
+  where
+    fix s = if last s == '.' then s ++ "0" else s
 
 stringP = literalP S.STRING (String . read)
 
