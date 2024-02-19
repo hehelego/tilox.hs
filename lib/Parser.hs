@@ -97,9 +97,7 @@ unaryP = (unaryOpP <*> unaryP) `orElse` primaryP
 -- | primary        → NUMBER | STRING | "true" | "false" | "nil" | "(" expression ")" ;
 primaryP = numberP `orElse` stringP `orElse` boolP `orElse` nilP `orElse` groupedP
 
-literalP tp lift = do
-  token <- takeType tp
-  pure $ LiteralExpr $ lift $ S.tokRaw token
+literalP tp lift = LiteralExpr . lift . S.tokRaw <$> takeType tp
 
 numberP = literalP S.NUMBER (Number . read)
 
@@ -161,11 +159,11 @@ unaryOps = [S.MINUS, S.BANG]
 binaryOps = [S.EQUAL_EQUAL, S.BANG_EQUAL, S.LESS, S.LESS_EQUAL, S.GREATER, S.GREATER_EQUAL, S.PLUS, S.MINUS, S.STAR, S.SLASH]
 
 unaryOpP :: Parser (Expr -> Expr)
-unaryOpP = do
-  token <- takeCheck (`elem` unaryOps) "expecting an unary operator token"
-  pure $ UnaryExpr $ case S.tokType token of
-    S.MINUS -> Neg
-    S.BANG -> Not
+unaryOpP = parseOp <$> takeCheck (`elem` unaryOps) "expecting an unary operator token"
+  where
+    parseOp token = UnaryExpr $ case S.tokType token of
+      S.MINUS -> Neg
+      S.BANG -> Not
 
 binaryOpP :: [S.Type] -> Parser (Expr -> Expr -> Expr)
 binaryOpP opTypes = do
