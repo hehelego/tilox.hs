@@ -45,6 +45,7 @@ executable tilox-hs
 test-suite test
     type:             exitcode-stdio-1.0
     main-is:          Test.hs
+    other-modules:    ScannerTest, ParserTest
     build-depends:    base >= 4 && < 5, tilox-hs, hspec >= 2.11
     hs-source-dirs:   test
     default-language: Haskell2010
