@@ -43,7 +43,7 @@ instance Show Expr where
 instance Show Literal where
   show (Number n) = show n
   show (String s) = show s
-  show (Bool b) = show b
+  show (Bool b) = if b then "true" else "false"
   show Nil = "nil"
 
 instance Show UnaryOp where
