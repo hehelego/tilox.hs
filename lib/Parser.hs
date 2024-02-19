@@ -10,7 +10,12 @@ module Parser
 where
 
 import Data.Bifunctor (first)
+import Data.Functor (($>))
 import qualified Scanner as S
+
+newtype Prog = Prog [Stmt]
+
+type Stmt = Expr
 
 -- | the grammar
 -- expression     → literal | unary | binary | grouping ;
@@ -29,6 +34,33 @@ data Literal = Number Double | String String | Bool Bool | Nil
 data UnaryOp = Neg | Not
 
 data BinaryOp = Eq | Neq | Lt | Leq | Gt | Geq | Plus | Minus | Times | Divides
+
+instance Show Expr where
+  show (LiteralExpr lit) = show lit
+  show (UnaryExpr op e) = "(" ++ show op ++ " " ++ show e ++ ")"
+  show (BinaryExpr op l r) = "(" ++ show l ++ " " ++ show op ++ " " ++ show r ++ ")"
+
+instance Show Literal where
+  show (Number n) = show n
+  show (String s) = show s
+  show (Bool b) = show b
+  show Nil = "nil"
+
+instance Show UnaryOp where
+  show Neg = "-"
+  show Not = "!"
+
+instance Show BinaryOp where
+  show Eq = "=="
+  show Neq = "!="
+  show Lt = "<"
+  show Leq = "<="
+  show Gt = ">"
+  show Geq = ">="
+  show Plus = "+"
+  show Minus = "-"
+  show Times = "*"
+  show Divides = "/"
 
 -- | Parse an expression tree
 chainP :: Parser Expr -> Parser (Expr -> Expr -> Expr) -> Parser Expr
@@ -81,6 +113,9 @@ boolP = literalP S.TRUE readBool `orElse` literalP S.FALSE readBool
       _ -> error "a boolean token that is not true nor false"
 
 nilP = literalP S.NIL (const Nil)
+
+eofP :: Parser ()
+eofP = takeType S.EOF $> ()
 
 groupedP = left *> exprP <* right
   where
@@ -166,5 +201,5 @@ instance Monad Parser where
 -- The second parser is provided with the entire input if the first parser fails.
 orElse :: Parser a -> Parser a -> Parser a
 p `orElse` q = Parser $ \toks -> case runParser p toks of
-  (Left e, toks') -> runParser q toks
+  (Left _, _) -> runParser q toks
   (Right x, toks') -> (Right x, toks')
