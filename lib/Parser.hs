@@ -1,4 +1,13 @@
-module Parser where
+module Parser
+  ( Expr (..),
+    Literal (..),
+    UnaryOp (..),
+    BinaryOp (..),
+    Parser (..),
+    ParseErr (..),
+    exprP,
+  )
+where
 
 import Data.Bifunctor (first)
 import qualified Scanner as S
@@ -57,49 +66,60 @@ unaryP = (unaryOpP <*> unaryP) `orElse` primaryP
 primaryP = numberP `orElse` stringP `orElse` boolP `orElse` nilP `orElse` groupedP
 
 literalP tp lift = do
-  token <- takeType tp ParseErr
+  token <- takeType tp
   pure $ LiteralExpr $ lift $ S.tokRaw token
 
 numberP = literalP S.NUMBER (Number . read)
 
 stringP = literalP S.STRING (String . read)
 
-boolP = literalP S.TRUE (Bool . read) `orElse` literalP S.FALSE (Bool . read)
+boolP = literalP S.TRUE readBool `orElse` literalP S.FALSE readBool
+  where
+    readBool s = Bool $ case s of
+      "true" -> True
+      "false" -> False
+      _ -> error "a boolean token that is not true nor false"
 
 nilP = literalP S.NIL (const Nil)
 
 groupedP = left *> exprP <* right
   where
-    left = takeType S.LEFT_PAREN ParseErr
-    right = takeType S.RIGHT_PAREN ParseErr
+    left = takeType S.LEFT_PAREN
+    right = takeType S.RIGHT_PAREN
 
-data ParseErr = ParseErr
+type ErrMsg = String
+
+newtype ParseErr = ParseErr {errMsg :: ErrMsg} deriving (Show)
 
 newtype Parser a = Parser {runParser :: [S.Token] -> (Either ParseErr a, [S.Token])}
 
-failP :: ParseErr -> Parser a
-failP err = Parser $ \toks -> (Left err, toks)
+failP :: ErrMsg -> Parser a
+failP msg = Parser $ \toks ->
+  let err = ParseErr $ case toks of
+        t : _ -> "Error: " ++ msg ++ " at " ++ show t
+        [] -> "Error: " ++ msg ++ " at end of file"
+   in (Left err, toks)
 
 -- | A parser that only checks if a condition is hold
-checkP :: Bool -> ParseErr -> Parser ()
+checkP :: Bool -> ErrMsg -> Parser ()
 checkP cond err = if cond then pure () else failP err
 
 -- | consume a token
 consume :: Parser S.Token
 consume = Parser $ \toks -> case toks of
   (t : rest) -> (Right t, rest)
-  _ -> (Left ParseErr, toks)
+  [] -> (Left $ ParseErr "Error: token stream ended", [])
 
 -- | consume a token and check if a predicate on the token type is satisfied
-takeCheck :: (S.Type -> Bool) -> ParseErr -> Parser S.Token
+takeCheck :: (S.Type -> Bool) -> ErrMsg -> Parser S.Token
 takeCheck pred err = do
   token <- consume
   checkP (pred $ S.tokType token) err
   pure token
 
 -- | consume a token and check if the token type matches with the provided type
-takeType :: S.Type -> ParseErr -> Parser S.Token
-takeType t = takeCheck (== t)
+takeType :: S.Type -> Parser S.Token
+takeType t = takeCheck (== t) $ "expecting a " ++ show t
 
 binaryOps, unaryOps :: [S.Type]
 unaryOps = [S.MINUS, S.BANG]
@@ -107,14 +127,14 @@ binaryOps = [S.EQUAL_EQUAL, S.BANG_EQUAL, S.LESS, S.LESS_EQUAL, S.GREATER, S.GRE
 
 unaryOpP :: Parser (Expr -> Expr)
 unaryOpP = do
-  token <- takeCheck (`elem` unaryOps) ParseErr
+  token <- takeCheck (`elem` unaryOps) "expecting an unary operator token"
   pure $ UnaryExpr $ case S.tokType token of
     S.MINUS -> Neg
     S.BANG -> Not
 
 binaryOpP :: [S.Type] -> Parser (Expr -> Expr -> Expr)
 binaryOpP opTypes = do
-  token <- takeCheck (`elem` binaryOps) ParseErr
+  token <- takeCheck (`elem` binaryOps) "expecting a binary operator token"
   let t = S.tokType token
   pure $ BinaryExpr $ case t of
     S.EQUAL_EQUAL -> Eq
