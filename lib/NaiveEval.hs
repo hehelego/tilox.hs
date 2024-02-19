@@ -11,7 +11,7 @@ data Value = Nil | Bool Bool | Number Double | String String deriving (Eq)
 
 instance Show Value where
   show Nil = "nil"
-  show (Bool b) = show b
+  show (Bool b) = if b then "true" else "false"
   show (Number n) = show n
   show (String s) = show s
   show _ = error "unsupported value"
