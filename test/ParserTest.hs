@@ -9,9 +9,44 @@ ateof rest = do
   let eof = head rest
   S.tokType eof `shouldBe` S.EOF
 
+parseE input = do
+  let (Right (), toks) = S.scan input
+  let (Right expr, rest) = runParser exprP toks
+  ateof rest
+  pure expr
+
+parseE' input = do
+  let (Right (), toks) = S.scan input
+  let (Left e, _) = runParser exprP toks
+  pure e
+
 test :: Spec
 test = do
   describe "Parser-Expr" $ do
+    it "parse primary expressions - number" $ do
+      expr <- parseE "1"
+      show expr `shouldBe` "1.0"
+      expr <- parseE "1."
+      show expr `shouldBe` "1.0"
+      expr <- parseE "0."
+      show expr `shouldBe` "0.0"
+      expr <- parseE "0993"
+      show expr `shouldBe` "993.0"
+
+    it "parse primary expressions - string" $ do
+      let r = "aa"
+      expr <- parseE $ show r
+      show expr `shouldBe` show r
+      let r = "a\t\n\\a"
+      expr <- parseE $ show r
+      show expr `shouldBe` show r
+
+    it "parse primary expressions - bool" $ do
+      expr <- parseE "true"
+      show expr `shouldBe` "true"
+      expr <- parseE "false"
+      show expr `shouldBe` "false"
+
     it "parse simply addition" $ do
       let (Right (), toks) = S.scan "1+1"
       let (Right expr, rest) = runParser exprP toks
