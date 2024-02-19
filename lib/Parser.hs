@@ -166,20 +166,19 @@ unaryOpP = parseOp <$> takeCheck (`elem` unaryOps) "expecting an unary operator 
       S.BANG -> Not
 
 binaryOpP :: [S.Type] -> Parser (Expr -> Expr -> Expr)
-binaryOpP opTypes = do
-  token <- takeCheck (`elem` opTypes) "expecting a binary operator token"
-  let t = S.tokType token
-  pure $ BinaryExpr $ case t of
-    S.EQUAL_EQUAL -> Eq
-    S.BANG_EQUAL -> Neq
-    S.LESS -> Lt
-    S.LESS_EQUAL -> Leq
-    S.GREATER -> Gt
-    S.GREATER_EQUAL -> Geq
-    S.PLUS -> Plus
-    S.MINUS -> Minus
-    S.STAR -> Times
-    S.SLASH -> Divides
+binaryOpP opTypes = parseOp <$> takeCheck (`elem` opTypes) "expecting a binary operator token"
+  where
+    parseOp token = BinaryExpr $ case S.tokType token of
+      S.EQUAL_EQUAL -> Eq
+      S.BANG_EQUAL -> Neq
+      S.LESS -> Lt
+      S.LESS_EQUAL -> Leq
+      S.GREATER -> Gt
+      S.GREATER_EQUAL -> Geq
+      S.PLUS -> Plus
+      S.MINUS -> Minus
+      S.STAR -> Times
+      S.SLASH -> Divides
 
 instance Functor Parser where
   fmap f p = Parser $ \toks -> (f <$>) `first` runParser p toks
