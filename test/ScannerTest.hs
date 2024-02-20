@@ -123,3 +123,43 @@ test = describe "Scanner" $ do
                      Token "" (crng 2 4 2 4) EOF
                    ]
                  )
+
+  it "comprehensive tokenization" $ do
+    let (Right (), toks) = scan "var hello; for(var i=1;i<10;i=i+1) { print i; }"
+    tokType <$> toks
+      `shouldBe` [
+                   -- var hello;
+                   VAR,
+                   IDENTIFIER,
+                   SEMICOLON,
+                   -- for(
+                   FOR,
+                   LEFT_PAREN,
+                   -- var i=1
+                   VAR,
+                   IDENTIFIER,
+                   EQUAL,
+                   NUMBER,
+                   SEMICOLON,
+                   -- i<10;
+                   IDENTIFIER,
+                   LESS,
+                   NUMBER,
+                   SEMICOLON,
+                   -- i=i+1
+                   IDENTIFIER,
+                   EQUAL,
+                   IDENTIFIER,
+                   PLUS,
+                   NUMBER,
+                   -- )
+                   RIGHT_PAREN,
+                   -- { print i; }
+                   LEFT_BRACE,
+                   PRINT,
+                   IDENTIFIER,
+                   SEMICOLON,
+                   RIGHT_BRACE,
+                   -- eof
+                   EOF
+                 ]
