@@ -77,25 +77,25 @@ chainP leaveP connP = leaveP >>= chain
 exprP, equalityP, compP, termP, factorP, unaryP, primaryP, numberP, stringP, boolP, nilP, groupedP :: Parser Expr
 
 -- | expression     → equality ;
-exprP = equalityP
+exprP = equalityP `orElse` failP "no expression"
 
 -- | equality       → comparison ( ( "!=" | "==" ) comparison )* ;
-equalityP = chainP compP $ binaryOpP [S.EQUAL_EQUAL, S.BANG_EQUAL]
+equalityP = chainP compP (binaryOpP [S.EQUAL_EQUAL, S.BANG_EQUAL]) `orElse` failP "no equality expression"
 
 -- | comparison     → term ( ( ">" | ">=" | "<" | "<=" ) term )* ;
-compP = chainP termP $ binaryOpP [S.GREATER, S.GREATER_EQUAL, S.LESS, S.LESS_EQUAL]
+compP = chainP termP (binaryOpP [S.GREATER, S.GREATER_EQUAL, S.LESS, S.LESS_EQUAL]) `orElse` failP "no comparison expression"
 
 -- | term           → factor ( ( "-" | "+" ) factor )* ;
-termP = chainP factorP $ binaryOpP [S.MINUS, S.PLUS]
+termP = chainP factorP (binaryOpP [S.MINUS, S.PLUS]) `orElse` failP "no term expression"
 
 -- | factor         → unary ( ( "/" | "*" ) unary )* ;
-factorP = chainP unaryP $ binaryOpP [S.SLASH, S.STAR]
+factorP = chainP unaryP (binaryOpP [S.SLASH, S.STAR]) `orElse` failP "no factor expression"
 
 -- | unary          → ( "!" | "-" ) unary | primary ;
-unaryP = (unaryOpP <*> unaryP) `orElse` primaryP
+unaryP = (unaryOpP <*> unaryP) `orElse` primaryP `orElse` failP "no unary expression"
 
 -- | primary        → NUMBER | STRING | "true" | "false" | "nil" | "(" expression ")" ;
-primaryP = numberP `orElse` stringP `orElse` boolP `orElse` nilP `orElse` groupedP
+primaryP = numberP `orElse` stringP `orElse` boolP `orElse` nilP `orElse` groupedP `orElse` failP "no primary expression"
 
 literalP tp lift = LiteralExpr . lift . S.tokRaw <$> takeType tp
 
@@ -130,27 +130,34 @@ newtype Parser a = Parser {runParser :: [S.Token] -> (Either ParseErr a, [S.Toke
 
 failP :: ErrMsg -> Parser a
 failP msg = Parser $ \toks ->
-  let err = ParseErr $ case toks of
-        t : _ -> "Error: " ++ msg ++ " at " ++ show t
-        [] -> "Error: " ++ msg ++ " at end of file"
+  let err =
+        ParseErr $
+          msg ++ codeloc toks
    in (Left err, toks)
+  where
+    codeloc [] = " past EOF"
+    codeloc (t : _) = " at " ++ show t
 
 -- | A parser that only checks if a condition is hold
 checkP :: Bool -> ErrMsg -> Parser ()
 checkP cond err = if cond then pure () else failP err
 
+-- | peek the next token
+peek :: Parser S.Token
+peek = Parser $ \toks -> case toks of
+  (t : _) -> (Right t, toks)
+  [] -> (Left $ ParseErr "token stream ended", [])
+
 -- | consume a token
-consume :: Parser S.Token
-consume = Parser $ \toks -> case toks of
-  (t : rest) -> (Right t, rest)
-  [] -> (Left $ ParseErr "Error: token stream ended", [])
+consume :: Parser ()
+consume = Parser $ \toks -> (Right (), tail toks)
 
 -- | consume a token and check if a predicate on the token type is satisfied
 takeCheck :: (S.Type -> Bool) -> ErrMsg -> Parser S.Token
 takeCheck pred err = do
-  token <- consume
+  token <- peek
   checkP (pred $ S.tokType token) err
-  pure token
+  consume $> token
 
 -- | consume a token and check if the token type matches with the provided type
 takeType :: S.Type -> Parser S.Token
@@ -197,8 +204,8 @@ instance Monad Parser where
     (Right x, toks') -> runParser (q x) toks'
 
 -- | Parse the input with either the first or the second parser.
--- The second parser is provided with the entire input if the first parser fails.
+-- If the first parser fails to consume any token, then parse the token stream with the second parser
 orElse :: Parser a -> Parser a -> Parser a
 p `orElse` q = Parser $ \toks -> case runParser p toks of
-  (Left _, _) -> runParser q toks
+  (Left e, toks') -> if toks == toks' then runParser q toks else (Left e, toks')
   (Right x, toks') -> (Right x, toks')
