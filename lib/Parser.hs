@@ -5,7 +5,13 @@ module Parser
     BinaryOp (..),
     Parser (..),
     ParseErr (..),
+    Prog (..),
+    Decl (..),
+    Stmt (..),
+    Ident (..),
     exprP,
+    stmtP,
+    progP,
   )
 where
 
@@ -13,9 +19,13 @@ import Data.Bifunctor (first)
 import Data.Functor (($>))
 import qualified Scanner as S
 
-newtype Prog = Prog [Stmt]
+newtype Prog = Prog [Decl]
 
-type Stmt = Expr
+data Decl = StmtDecl Stmt | VarDecl Ident (Maybe Expr)
+
+newtype Stmt = ExprStmt Expr
+
+newtype Ident = Ident String deriving(Eq)
 
 -- | the grammar
 -- expression     → literal | unary | binary | grouping ;
@@ -28,19 +38,36 @@ data Expr
   = LiteralExpr Literal
   | UnaryExpr UnaryOp Expr
   | BinaryExpr BinaryOp Expr Expr
+  | PrintExpr Expr
 
-data Literal = Number Double | String String | Bool Bool | Nil
+data Literal = Ref Ident | Number Double | String String | Bool Bool | Nil
 
 data UnaryOp = Neg | Not
 
 data BinaryOp = Eq | Neq | Lt | Leq | Gt | Geq | Plus | Minus | Times | Divides
 
+instance Show Decl where
+  show (StmtDecl stmt) = show stmt
+  show (VarDecl var init) = "var " ++ show var ++ initval ++ ";"
+    where
+      initval = case init of
+        Just expr -> " = " ++ show expr
+        Nothing -> ""
+
+instance Show Stmt where
+  show (ExprStmt e) = show e ++ ";"
+
+instance Show Ident where
+  show (Ident id) = id
+
 instance Show Expr where
   show (LiteralExpr lit) = show lit
   show (UnaryExpr op e) = "(" ++ show op ++ " " ++ show e ++ ")"
   show (BinaryExpr op l r) = "(" ++ show l ++ " " ++ show op ++ " " ++ show r ++ ")"
+  show (PrintExpr e) = "print " ++ show e
 
 instance Show Literal where
+  show (Ref id) = show id
   show (Number n) = show n
   show (String s) = show s
   show (Bool b) = if b then "true" else "false"
@@ -74,10 +101,12 @@ chainP leaveP connP = leaveP >>= chain
       )
         `orElse` pure lhs
 
-exprP, equalityP, compP, termP, factorP, unaryP, primaryP, numberP, stringP, boolP, nilP, groupedP :: Parser Expr
+exprP, printP, equalityP, compP, termP, factorP, unaryP, primaryP, identRefP, numberP, stringP, boolP, nilP, groupedP :: Parser Expr
 
 -- | expression     → equality ;
-exprP = equalityP `orElse` failP "no expression"
+exprP = equalityP `orElse` printP `orElse` failP "no expression"
+
+printP = PrintExpr <$> (takeType S.PRINT *> equalityP) `orElse` failP "no print expression"
 
 -- | equality       → comparison ( ( "!=" | "==" ) comparison )* ;
 equalityP = chainP compP (binaryOpP [S.EQUAL_EQUAL, S.BANG_EQUAL]) `orElse` failP "no equality expression"
@@ -95,9 +124,15 @@ factorP = chainP unaryP (binaryOpP [S.SLASH, S.STAR]) `orElse` failP "no factor 
 unaryP = (unaryOpP <*> unaryP) `orElse` primaryP `orElse` failP "no unary expression"
 
 -- | primary        → NUMBER | STRING | "true" | "false" | "nil" | "(" expression ")" ;
-primaryP = numberP `orElse` stringP `orElse` boolP `orElse` nilP `orElse` groupedP `orElse` failP "no primary expression"
+primaryP = numberP `orElse` stringP `orElse` boolP `orElse` nilP `orElse` groupedP `orElse` identRefP `orElse` failP "no primary expression"
 
 literalP tp lift = LiteralExpr . lift . S.tokRaw <$> takeType tp
+
+identRefP = LiteralExpr . Ref <$> identP
+
+identP = parseId <$> takeType S.IDENTIFIER
+  where
+    parseId t = Ident $ S.tokRaw t
 
 numberP = literalP S.NUMBER (Number . read . fix)
   where
@@ -121,6 +156,27 @@ groupedP = left *> exprP <* right
   where
     left = takeType S.LEFT_PAREN
     right = takeType S.RIGHT_PAREN
+
+semicolonP :: Parser ()
+semicolonP = takeType S.SEMICOLON $> ()
+
+stmtP :: Parser Stmt
+stmtP = ExprStmt <$> exprP <* semicolonP
+
+declP :: Parser Decl
+declP = stmt `orElse` var
+  where
+    stmt = StmtDecl <$> stmtP
+    var =
+      let var = takeType S.VAR *> identP
+          init = takeType S.EQUAL *> exprP
+          init' = fmap Just init `orElse` pure Nothing
+       in VarDecl <$> var <*> init' <* semicolonP
+
+progP :: Parser Prog
+progP = fmap Prog $ decls <* eofP
+  where
+    decls = (:) <$> declP <*> decls `orElse` pure []
 
 type ErrMsg = String
 
@@ -190,7 +246,7 @@ binaryOpP opTypes = parseOp <$> takeCheck (`elem` opTypes) "expecting a binary o
       S.SLASH -> Divides
 
 instance Functor Parser where
-  fmap f p = Parser $ \toks -> (f <$>) `first` runParser p toks
+  fmap f p = Parser $ \toks -> fmap f `first` runParser p toks
 
 instance Applicative Parser where
   pure x = Parser $ \toks -> (Right x, toks)
