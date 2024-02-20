@@ -68,6 +68,7 @@ char1symbols =
     ("/", SLASH),
     ("*", STAR),
     ("!", BANG),
+    ("=", EQUAL),
     ("<", LESS),
     (">", GREATER)
   ]
