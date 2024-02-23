@@ -1,6 +1,7 @@
 module Main where
 
 import Control.Monad (mapM_)
+import qualified NaiveEval as Eval
 import qualified Parser
 import qualified Scanner
 import System.Environment (getArgs)
@@ -11,13 +12,13 @@ main = do
   args <- getArgs
   case args of
     fp : _ -> readFile fp >>= exec
-    [] -> repl
+    [] -> repl Eval.emptyEnv
 
 exec :: String -> IO ()
 exec source = undefined
 
-repl :: IO ()
-repl = do
+repl :: Eval.Env -> IO ()
+repl env = do
   putStr "In> "
   hFlush stdout
   r <- getLine
@@ -27,8 +28,15 @@ repl = do
     Left err -> putStrLn $ "ERROR: " ++ Scanner.reason err
     _ -> pure ()
   putStrLn "=== parsing ==="
-  let (res, toks') = Parser.runParser Parser.exprP toks
+  let (res, toks') = Parser.runParser Parser.progP toks
   case res of
-    Left err -> putStrLn $ "ERROR: " ++ Parser.errMsg err
-    Right e -> print e
-  repl
+    Left err -> do
+      putStrLn $ "ERROR: " ++ Parser.errMsg err
+      repl env
+    Right prog@(Parser.Prog stmts) -> do
+      mapM_ print stmts
+      putStrLn "=== evaluating ==="
+      (r, env') <- Eval.runState (Eval.runProg prog) env
+      putStrLn "=== final result ==="
+      print r
+      repl env'
