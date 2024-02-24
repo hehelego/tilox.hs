@@ -25,7 +25,7 @@ data Decl = StmtDecl Stmt | VarDecl Ident (Maybe Expr)
 
 newtype Stmt = ExprStmt Expr
 
-newtype Ident = Ident String deriving(Eq)
+newtype Ident = Ident String deriving (Eq)
 
 -- | the grammar
 -- expression     → literal | unary | binary | grouping ;
@@ -39,6 +39,7 @@ data Expr
   | UnaryExpr UnaryOp Expr
   | BinaryExpr BinaryOp Expr Expr
   | PrintExpr Expr
+  | AssignExpr Ident Expr
 
 data Literal = Ref Ident | Number Double | String String | Bool Bool | Nil
 
@@ -65,6 +66,7 @@ instance Show Expr where
   show (UnaryExpr op e) = "(" ++ show op ++ " " ++ show e ++ ")"
   show (BinaryExpr op l r) = "(" ++ show l ++ " " ++ show op ++ " " ++ show r ++ ")"
   show (PrintExpr e) = "print " ++ show e
+  show (AssignExpr id e) = show id ++ " = " ++ show e
 
 instance Show Literal where
   show (Ref id) = show id
@@ -101,11 +103,15 @@ chainP leaveP connP = leaveP >>= chain
       )
         `orElse` pure lhs
 
-exprP, printP, equalityP, compP, termP, factorP, unaryP, primaryP, identRefP, numberP, stringP, boolP, nilP, groupedP :: Parser Expr
+exprP, assgnP, printP, equalityP, compP, termP, factorP, unaryP, primaryP, identRefP, numberP, stringP, boolP, nilP, groupedP :: Parser Expr
 
--- | expression     → equality ;
-exprP = equalityP `orElse` printP `orElse` failP "no expression"
+-- | expression     → assignment | equality | print
+exprP = assgnP `orElse` equalityP `orElse` printP `orElse` failP "no expression"
 
+-- | assignment     → IDENTIFIER "=" equality
+assgnP = AssignExpr <$> (identP <* takeType S.EQUAL) <*> equalityP
+
+-- | print          → "print" equality
 printP = PrintExpr <$> (takeType S.PRINT *> equalityP) `orElse` failP "no print expression"
 
 -- | equality       → comparison ( ( "!=" | "==" ) comparison )* ;

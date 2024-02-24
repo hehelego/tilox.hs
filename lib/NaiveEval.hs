@@ -25,8 +25,8 @@ type Assignment = [(P.Ident, Val)]
 assgnHas :: P.Ident -> Assignment -> Bool
 assgnHas id assgn = isJust $ lookup id assgn
 
-assgnUpd :: P.Ident -> (Val -> Val) -> Assignment -> Assignment
-assgnUpd id f = map $ \(x, v) -> (x, if x == id then f v else v)
+assgnUpd :: P.Ident -> Val -> Assignment -> Assignment
+assgnUpd id nv = map $ \(x, v) -> (x, if x == id then nv else v)
 
 data Env = Env
   { assgn :: Assignment,
@@ -41,11 +41,11 @@ envLookup id env = if isJust cur then cur else par
     cur = lookup id $ assgn env
     par = parent env >>= envLookup id
 
-envModify :: P.Ident -> (Val -> Val) -> Env -> Env
-envModify id f env@(Env assgn parent) =
+envModify :: P.Ident -> Val -> Env -> Env
+envModify id v env@(Env assgn parent) =
   if assgnHas id assgn
-    then env {assgn = assgnUpd id f assgn}
-    else env {parent = envModify id f <$> parent}
+    then env {assgn = assgnUpd id v assgn}
+    else env {parent = envModify id v <$> parent}
 
 envAdd :: P.Ident -> Val -> Env -> Env
 envAdd id val env = env {assgn = (id, val) : assgn env}
@@ -115,6 +115,7 @@ eval (P.LiteralExpr lit) = evalLiteral lit
 eval (P.UnaryExpr uop sub) = evalUnary uop sub
 eval (P.BinaryExpr bop lhs rhs) = evalBinary bop lhs rhs
 eval (P.PrintExpr e) = evalPrint e
+eval (P.AssignExpr id e) = evalAssign id e
 eval _ = error "unsupported expression"
 
 evalLiteral :: P.Literal -> VMstate Val
@@ -170,6 +171,14 @@ evalBinary op lhs rhs =
 
 evalPrint :: P.Expr -> VMstate Val
 evalPrint e = eval e >>= liftIO . print >> pure Nil
+
+evalAssign :: P.Ident -> P.Expr -> VMstate Val
+evalAssign id e = do
+  env <- get
+  if isJust $ envLookup id env
+    then eval e >>= modify . envModify id
+    else raise $ NotInScope id
+  pure Nil
 
 -- | Stateful computation that may fail and may have side effect
 -- s: state
