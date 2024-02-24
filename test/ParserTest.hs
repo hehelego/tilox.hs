@@ -1,5 +1,6 @@
 module ParserTest (test) where
 
+import qualified AST as A
 import qualified Parser as P
 import qualified Scanner as S
 import Test.Hspec

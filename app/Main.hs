@@ -1,5 +1,6 @@
 module Main where
 
+import qualified AST
 import Control.Monad (mapM_)
 import qualified NaiveEval as Eval
 import qualified Parser
@@ -33,10 +34,10 @@ repl env = do
     Left err -> do
       putStrLn $ "ERROR: " ++ Parser.errMsg err
       repl env
-    Right prog@(Parser.Prog stmts) -> do
+    Right prog@(AST.Prog stmts) -> do
       mapM_ print stmts
       putStrLn "=== evaluating ==="
-      (r, env') <- Eval.runState (Eval.runProg prog) env
-      putStrLn "=== final result ==="
-      print r
+      (e, env') <- Eval.runState (Eval.runProg prog) env
+      putStrLn "=== execution result ==="
+      print e
       repl env'

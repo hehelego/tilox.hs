@@ -11,21 +11,36 @@ module NaiveEval
   )
 where
 
-import Control.Monad ((>=>))
+import qualified AST
+import Control.Monad (void, (>=>))
+import Control.Monad.IO.Class (MonadIO (liftIO))
 import Data.Bifunctor (first)
-import Data.Maybe (fromJust, fromMaybe, isJust)
-import qualified Parser as P
+import Data.Functor (($>))
+import Data.Maybe (isJust)
 
-data ValType = NilT | BoolT | NumberT | StringT deriving (Show)
+data ValType = NilT | BoolT | NumberT | StringT deriving (Eq)
 
 data Val = Nil | Bool Bool | Number Double | String String deriving (Eq)
 
-type Assignment = [(P.Ident, Val)]
+instance Show ValType where
+  show NilT = "[type: nil]"
+  show BoolT = "[type: bool]"
+  show NumberT = "[type: number]"
+  show StringT = "[type: string]"
 
-assgnHas :: P.Ident -> Assignment -> Bool
+instance Show Val where
+  show Nil = "nil"
+  show (Bool b) = if b then "true" else "false"
+  show (Number n) = show n
+  show (String s) = show s
+  show _ = error "unsupported value"
+
+type Assignment = [(AST.Ident, Val)]
+
+assgnHas :: AST.Ident -> Assignment -> Bool
 assgnHas id assgn = isJust $ lookup id assgn
 
-assgnUpd :: P.Ident -> Val -> Assignment -> Assignment
+assgnUpd :: AST.Ident -> Val -> Assignment -> Assignment
 assgnUpd id nv = map $ \(x, v) -> (x, if x == id then nv else v)
 
 data Env = Env
@@ -35,19 +50,19 @@ data Env = Env
 
 emptyEnv = Env [] Nothing
 
-envLookup :: P.Ident -> Env -> Maybe Val
+envLookup :: AST.Ident -> Env -> Maybe Val
 envLookup id env = if isJust cur then cur else par
   where
     cur = lookup id $ assgn env
     par = parent env >>= envLookup id
 
-envModify :: P.Ident -> Val -> Env -> Env
+envModify :: AST.Ident -> Val -> Env -> Env
 envModify id v env@(Env assgn parent) =
   if assgnHas id assgn
     then env {assgn = assgnUpd id v assgn}
     else env {parent = envModify id v <$> parent}
 
-envAdd :: P.Ident -> Val -> Env -> Env
+envAdd :: AST.Ident -> Val -> Env -> Env
 envAdd id val env = env {assgn = (id, val) : assgn env}
 
 envPush :: Env -> Env
@@ -56,7 +71,7 @@ envPush env = Env {assgn = [], parent = Just env}
 envPop :: Env -> Maybe Env
 envPop = parent
 
-data Err = TypeMismatch {expectedT :: ValType, actualT :: ValType} | NotInScope {referred :: P.Ident} | AlreadyDeclared {redef :: P.Ident}
+data Err = TypeMismatch {expectedT :: ValType, actualT :: ValType} | NotInScope {referred :: AST.Ident} | AlreadyDeclared {redef :: AST.Ident}
 
 instance Show Err where
   show (TypeMismatch exp act) = "ERROR: type miss match," ++ "expected " ++ show exp ++ "actual " ++ show act
@@ -66,17 +81,24 @@ instance Show Err where
 
 type VMstate a = State Env Err a
 
-runProg :: P.Prog -> VMstate Val
-runProg (P.Prog decls) = foldl (\s d -> s >> runDecl d) (pure Nil) decls
+runProg :: AST.Prog -> VMstate ()
+runProg (AST.Prog decls) = foldl (>>) init decls'
+  where
+    init = pure ()
+    decls' = runDecl <$> decls
 
-runDecl :: P.Decl -> VMstate Val
-runDecl (P.StmtDecl stmt) = runStmt stmt
-runDecl (P.VarDecl var init) = runVarDecl var init
+runDecl :: AST.Decl -> VMstate ()
+runDecl (AST.StmtDecl stmt) = runStmt stmt
+runDecl (AST.VarDecl var init) = runVarDecl var init
 
-runStmt :: P.Stmt -> VMstate Val
-runStmt (P.ExprStmt e) = eval e
+runStmt :: AST.Stmt -> VMstate ()
+runStmt (AST.ExprStmt e) = void $ eval e
+runStmt (AST.PrintStmt e) = runPrint e
 
-runVarDecl :: P.Ident -> Maybe P.Expr -> VMstate Val
+runPrint :: AST.Expr -> VMstate ()
+runPrint e = eval e >>= liftIO . print
+
+runVarDecl :: AST.Ident -> Maybe AST.Expr -> VMstate ()
 runVarDecl id init =
   do
     env <- get
@@ -85,14 +107,13 @@ runVarDecl id init =
       Nothing -> pure ()
     iv <- maybe (pure Nil) eval init
     modify $ envAdd id iv
-    pure Nil
 
-instance Show Val where
-  show Nil = "nil"
-  show (Bool b) = if b then "true" else "false"
-  show (Number n) = show n
-  show (String s) = show s
-  show _ = error "unsupported value"
+evalAssign :: AST.Ident -> AST.Expr -> VMstate ()
+evalAssign id e = do
+  env <- get
+  if isJust $ envLookup id env
+    then eval e >>= modify . envModify id
+    else raise $ NotInScope id
 
 unwrapBool :: Val -> Bool
 unwrapBool (Bool b) = b
@@ -110,52 +131,51 @@ unwrapNil :: Val -> ()
 unwrapNil Nil = ()
 unwrapNil _ = error "not a nil value"
 
-eval :: P.Expr -> VMstate Val
-eval (P.LiteralExpr lit) = evalLiteral lit
-eval (P.UnaryExpr uop sub) = evalUnary uop sub
-eval (P.BinaryExpr bop lhs rhs) = evalBinary bop lhs rhs
-eval (P.PrintExpr e) = evalPrint e
-eval (P.AssignExpr id e) = evalAssign id e
+eval :: AST.Expr -> VMstate Val
+eval (AST.LiteralExpr lit) = evalLiteral lit
+eval (AST.UnaryExpr uop sub) = evalUnary uop sub
+eval (AST.BinaryExpr bop lhs rhs) = evalBinary bop lhs rhs
+eval (AST.AsgnExpr id e) = evalAssign id e $> Nil
 eval _ = error "unsupported expression"
 
-evalLiteral :: P.Literal -> VMstate Val
-evalLiteral (P.Ref ident) = do
+evalLiteral :: AST.Literal -> VMstate Val
+evalLiteral (AST.Ref ident) = do
   env <- get
   case envLookup ident env of
     Just v -> pure v
     Nothing -> raise $ NotInScope ident
-evalLiteral (P.Number n) = pure $ Number n
-evalLiteral (P.String s) = pure $ String s
-evalLiteral (P.Bool b) = pure $ Bool b
-evalLiteral P.Nil = pure Nil
+evalLiteral (AST.Number n) = pure $ Number n
+evalLiteral (AST.String s) = pure $ String s
+evalLiteral (AST.Bool b) = pure $ Bool b
+evalLiteral AST.Nil = pure Nil
 evalLiteral _ = error "unsupported literal"
 
-evalUnary :: P.UnaryOp -> P.Expr -> VMstate Val
+evalUnary :: AST.UnaryOp -> AST.Expr -> VMstate Val
 evalUnary op sub = let v = eval sub in opfunc op <$> v
   where
     opfunc op = case op of
-      P.Neg -> negf
-      P.Not -> notf
+      AST.Neg -> negf
+      AST.Not -> notf
       _ -> error "unsupported unary operator"
     negf v = Number (-unwrapNum v)
     notf v = Bool (not $ unwrapBool v)
 
-evalBinary :: P.BinaryOp -> P.Expr -> P.Expr -> VMstate Val
+evalBinary :: AST.BinaryOp -> AST.Expr -> AST.Expr -> VMstate Val
 evalBinary op lhs rhs =
   let lv = eval lhs; rv = eval rhs
    in opfunc op <$> lv <*> rv
   where
     opfunc op = case op of
-      P.Eq -> eq
-      P.Neq -> neq
-      P.Lt -> lt
-      P.Leq -> leq
-      P.Gt -> gt
-      P.Geq -> geq
-      P.Plus -> plus
-      P.Minus -> minus
-      P.Times -> times
-      P.Divides -> divides
+      AST.Eq -> eq
+      AST.Neq -> neq
+      AST.Lt -> lt
+      AST.Leq -> leq
+      AST.Gt -> gt
+      AST.Geq -> geq
+      AST.Plus -> plus
+      AST.Minus -> minus
+      AST.Times -> times
+      AST.Divides -> divides
       _ -> error "unknown binary operator"
     makeop lift unwrap op l r = lift $ unwrap l `op` unwrap r
     eq = makeop Bool id (==)
@@ -168,17 +188,6 @@ evalBinary op lhs rhs =
     minus = makeop Number unwrapNum (-)
     times = makeop Number unwrapNum (*)
     divides = makeop Number unwrapNum (/)
-
-evalPrint :: P.Expr -> VMstate Val
-evalPrint e = eval e >>= liftIO . print >> pure Nil
-
-evalAssign :: P.Ident -> P.Expr -> VMstate Val
-evalAssign id e = do
-  env <- get
-  if isJust $ envLookup id env
-    then eval e >>= modify . envModify id
-    else raise $ NotInScope id
-  pure Nil
 
 -- | Stateful computation that may fail and may have side effect
 -- s: state
@@ -204,6 +213,11 @@ instance Monad (State s e) where
         (Right x, s') -> runState (f x) s'
         (Left e, s') -> pure (Left e, s')
 
+instance MonadIO (State s e) where
+  liftIO io = State $ \s -> do
+    x <- io
+    pure (Right x, s)
+
 get :: State s e s
 get = State $ \s -> pure (Right s, s)
 
@@ -215,8 +229,3 @@ modify f = State $ \s -> pure (Right (), f s)
 
 raise :: e -> State s e a
 raise e = State $ \s -> pure (Left e, s)
-
-liftIO :: IO a -> State s e a
-liftIO io = State $ \s -> do
-  x <- io
-  pure (Right x, s)

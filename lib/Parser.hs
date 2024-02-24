@@ -1,118 +1,32 @@
 module Parser
-  ( Expr (..),
-    Literal (..),
-    UnaryOp (..),
-    BinaryOp (..),
-    Parser (..),
+  ( Parser (..),
     ParseErr (..),
-    Prog (..),
-    Decl (..),
-    Stmt (..),
-    Ident (..),
     exprP,
     stmtP,
+    declP,
     progP,
   )
 where
 
+import AST
 import Data.Bifunctor (first)
 import Data.Functor (($>))
 import qualified Scanner as S
 
-newtype Prog = Prog [Decl]
+-- expression parser
 
-data Decl = StmtDecl Stmt | VarDecl Ident (Maybe Expr)
+exprP, asgnP, equalityP, compP, termP, factorP, unaryP, primaryP, identRefP, numberP, stringP, boolP, nilP, groupedP :: Parser Expr
 
-newtype Stmt = ExprStmt Expr
+-- | expression     → assignment ;
+exprP = asgnP `orElse` failP "no expression"
 
-newtype Ident = Ident String deriving (Eq)
-
--- | the grammar
--- expression     → literal | unary | binary | grouping ;
--- literal        → NUMBER | STRING | "true" | "false" | "nil" ;
--- grouping       → "(" expression ")" ;
--- unary          → ( "-" | "!" ) expression ;
--- binary         → expression operator expression ;
--- operator       → "==" | "!=" | "<" | "<=" | ">" | ">=" | "+"  | "-"  | "*" | "/" ;
-data Expr
-  = LiteralExpr Literal
-  | UnaryExpr UnaryOp Expr
-  | BinaryExpr BinaryOp Expr Expr
-  | PrintExpr Expr
-  | AssignExpr Ident Expr
-
-data Literal = Ref Ident | Number Double | String String | Bool Bool | Nil
-
-data UnaryOp = Neg | Not
-
-data BinaryOp = Eq | Neq | Lt | Leq | Gt | Geq | Plus | Minus | Times | Divides
-
-instance Show Decl where
-  show (StmtDecl stmt) = show stmt
-  show (VarDecl var init) = "var " ++ show var ++ initval ++ ";"
-    where
-      initval = case init of
-        Just expr -> " = " ++ show expr
-        Nothing -> ""
-
-instance Show Stmt where
-  show (ExprStmt e) = show e ++ ";"
-
-instance Show Ident where
-  show (Ident id) = id
-
-instance Show Expr where
-  show (LiteralExpr lit) = show lit
-  show (UnaryExpr op e) = "(" ++ show op ++ " " ++ show e ++ ")"
-  show (BinaryExpr op l r) = "(" ++ show l ++ " " ++ show op ++ " " ++ show r ++ ")"
-  show (PrintExpr e) = "print " ++ show e
-  show (AssignExpr id e) = show id ++ " = " ++ show e
-
-instance Show Literal where
-  show (Ref id) = show id
-  show (Number n) = show n
-  show (String s) = show s
-  show (Bool b) = if b then "true" else "false"
-  show Nil = "nil"
-
-instance Show UnaryOp where
-  show Neg = "-"
-  show Not = "!"
-
-instance Show BinaryOp where
-  show Eq = "=="
-  show Neq = "!="
-  show Lt = "<"
-  show Leq = "<="
-  show Gt = ">"
-  show Geq = ">="
-  show Plus = "+"
-  show Minus = "-"
-  show Times = "*"
-  show Divides = "/"
-
--- | Parse an expression tree
-chainP :: Parser Expr -> Parser (Expr -> Expr -> Expr) -> Parser Expr
-chainP leaveP connP = leaveP >>= chain
-  where
-    chain lhs =
-      ( do
-          conn <- connP
-          rhs <- leaveP
-          chain $ conn lhs rhs
-      )
-        `orElse` pure lhs
-
-exprP, assgnP, printP, equalityP, compP, termP, factorP, unaryP, primaryP, identRefP, numberP, stringP, boolP, nilP, groupedP :: Parser Expr
-
--- | expression     → assignment | equality | print
-exprP = assgnP `orElse` equalityP `orElse` printP `orElse` failP "no expression"
-
--- | assignment     → IDENTIFIER "=" equality
-assgnP = AssignExpr <$> (identP <* takeType S.EQUAL) <*> equalityP
-
--- | print          → "print" equality
-printP = PrintExpr <$> (takeType S.PRINT *> equalityP) `orElse` failP "no print expression"
+-- | assignment     → IDENTIFIER "=" assignment | equality ;
+asgnP = do
+  lhs <- equalityP
+  op <- peek
+  case (lhs, S.tokType op) of
+    (LiteralExpr (Ref id), S.EQUAL) -> consume >> AsgnExpr id <$> asgnP
+    _ -> pure lhs
 
 -- | equality       → comparison ( ( "!=" | "==" ) comparison )* ;
 equalityP = chainP compP (binaryOpP [S.EQUAL_EQUAL, S.BANG_EQUAL]) `orElse` failP "no equality expression"
@@ -166,29 +80,35 @@ groupedP = left *> exprP <* right
 semicolonP :: Parser ()
 semicolonP = takeType S.SEMICOLON $> ()
 
-stmtP :: Parser Stmt
-stmtP = ExprStmt <$> exprP <* semicolonP
+-- program parser
+
+stmtP, exprStP, printStP :: Parser Stmt
+stmtP = (exprStP `orElse` printStP) <* semicolonP
+
+-- stmtP = (asgnStP `orElse` exprStP `orElse` printStP) <* semicolonP
+
+-- | expressionStmt -> expression ";"
+exprStP = ExprStmt <$> exprP
+
+-- | print          → "print" expr
+printStP = PrintStmt <$> (takeType S.PRINT *> exprP)
+
+varDeclP :: Parser Decl
+varDeclP = VarDecl <$> var <*> init' <* semicolonP
+  where
+    var = takeType S.VAR *> identP
+    init = takeType S.EQUAL *> exprP
+    init' = fmap Just init `orElse` pure Nothing
 
 declP :: Parser Decl
-declP = stmt `orElse` var
+declP = varDeclP `orElse` stmt
   where
     stmt = StmtDecl <$> stmtP
-    var =
-      let var = takeType S.VAR *> identP
-          init = takeType S.EQUAL *> exprP
-          init' = fmap Just init `orElse` pure Nothing
-       in VarDecl <$> var <*> init' <* semicolonP
 
 progP :: Parser Prog
 progP = fmap Prog $ decls <* eofP
   where
     decls = (:) <$> declP <*> decls `orElse` pure []
-
-type ErrMsg = String
-
-newtype ParseErr = ParseErr {errMsg :: ErrMsg} deriving (Show)
-
-newtype Parser a = Parser {runParser :: [S.Token] -> (Either ParseErr a, [S.Token])}
 
 failP :: ErrMsg -> Parser a
 failP msg = Parser $ \toks ->
@@ -251,6 +171,14 @@ binaryOpP opTypes = parseOp <$> takeCheck (`elem` opTypes) "expecting a binary o
       S.STAR -> Times
       S.SLASH -> Divides
 
+-- parser definition section
+
+type ErrMsg = String
+
+newtype ParseErr = ParseErr {errMsg :: ErrMsg} deriving (Show)
+
+newtype Parser a = Parser {runParser :: [S.Token] -> (Either ParseErr a, [S.Token])}
+
 instance Functor Parser where
   fmap f p = Parser $ \toks -> fmap f `first` runParser p toks
 
@@ -265,9 +193,23 @@ instance Monad Parser where
     (Left e, toks') -> (Left e, toks')
     (Right x, toks') -> runParser (q x) toks'
 
+-- combinators
+
 -- | Parse the input with either the first or the second parser.
 -- If the first parser fails to consume any token, then parse the token stream with the second parser
 orElse :: Parser a -> Parser a -> Parser a
 p `orElse` q = Parser $ \toks -> case runParser p toks of
   (Left e, toks') -> if toks == toks' then runParser q toks else (Left e, toks')
   (Right x, toks') -> (Right x, toks')
+
+-- | Parse an expression tree
+chainP :: Parser Expr -> Parser (Expr -> Expr -> Expr) -> Parser Expr
+chainP leaveP connP = leaveP >>= chain
+  where
+    chain lhs =
+      ( do
+          conn <- connP
+          rhs <- leaveP
+          chain $ conn lhs rhs
+      )
+        `orElse` pure lhs
