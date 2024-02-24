@@ -92,7 +92,7 @@ ifP = do
   elseKw <- peek
   brF <-
     if S.tokType elseKw == S.ELSE
-      then Just <$> stmtP
+      then consume >> Just <$> stmtP
       else pure Nothing
   pure $ IfStmt cond brT brF
 

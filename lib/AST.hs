@@ -59,21 +59,19 @@ instance Show Decl where
 instance Show Stmt where
   show (ExprStmt e) = show e ++ ";"
   show (PrintStmt e) = "print " ++ show e ++ ";"
-  show (IfStmt cond t f) =
-    "if ("
-      ++ show cond
-      ++ ")\n"
-      ++ show t
-      ++ elseBr
+  show (IfStmt cond t f) = unlines [part1, part2, part3]
     where
-      elseBr = case f of
-        Just brF -> "else\n" ++ show brF
+      part1 = "if (" ++ show cond ++ ")"
+      part2 = pad $ show t
+      part3 = case f of
+        Just brF -> unlines ["else", pad $ show brF]
         Nothing -> ""
-  show (BlockStmt ss) = "{\n" ++ inner ++ "}\n"
+  show (BlockStmt ss) = "{\n" ++ inner ++ "\n}"
     where
-      inner = intercalate "\n" ss'
-      ss' = show <$> ss
-      wrap x = '\t' : show x ++ "\n"
+      inner = pad $ intercalate "\n" $ show <$> ss
+
+pad :: String -> String
+pad = unlines . fmap ('\t' :) . lines
 
 instance Show Ident where
   show (Ident id) = id
