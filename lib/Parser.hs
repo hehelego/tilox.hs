@@ -15,7 +15,7 @@ import qualified Scanner as S
 
 -- expression parser
 
-exprP, asgnP, equalityP, compP, termP, factorP, unaryP, primaryP, identRefP, numberP, stringP, boolP, nilP, groupedP :: Parser Expr
+exprP, asgnP, equalityP, compP, termP, factorP, unaryP, primaryP, identRefP, numberP, stringP, boolP, nilP :: Parser Expr
 
 -- | expression     → assignment ;
 exprP = asgnP `orElse` failP "no expression"
@@ -44,7 +44,7 @@ factorP = chainP unaryP (binaryOpP [S.SLASH, S.STAR]) `orElse` failP "no factor 
 unaryP = (unaryOpP <*> unaryP) `orElse` primaryP `orElse` failP "no unary expression"
 
 -- | primary        → NUMBER | STRING | "true" | "false" | "nil" | "(" expression ")" ;
-primaryP = numberP `orElse` stringP `orElse` boolP `orElse` nilP `orElse` groupedP `orElse` identRefP `orElse` failP "no primary expression"
+primaryP = numberP `orElse` stringP `orElse` boolP `orElse` nilP `orElse` groupedP exprP `orElse` identRefP `orElse` failP "no primary expression"
 
 literalP tp lift = LiteralExpr . lift . S.tokRaw <$> takeType tp
 
@@ -72,7 +72,8 @@ nilP = literalP S.NIL (const Nil)
 eofP :: Parser ()
 eofP = takeType S.EOF $> ()
 
-groupedP = left *> exprP <* right
+groupedP :: Parser a -> Parser a
+groupedP p = left *> p <* right
   where
     left = takeType S.LEFT_PAREN
     right = takeType S.RIGHT_PAREN
@@ -82,17 +83,27 @@ semicolonP = takeType S.SEMICOLON $> ()
 
 -- program parser
 
-stmtP, exprStP, printStP :: Parser Stmt
-stmtP = multi `orElse` single
-  where
-    multi = takeType S.LEFT_BRACE *> (BlockStmt <$> many declP) <* takeType S.RIGHT_BRACE
-    single = (exprStP `orElse` printStP) <* semicolonP
+stmtP, exprStP, printStP, blockStP, ifP :: Parser Stmt
+stmtP = blockStP `orElse` printStP `orElse` ifP `orElse` exprStP
+ifP = do
+  takeType S.IF
+  cond <- groupedP exprP
+  brT <- stmtP
+  elseKw <- peek
+  brF <-
+    if S.tokType elseKw == S.ELSE
+      then Just <$> stmtP
+      else pure Nothing
+  pure $ IfStmt cond brT brF
+
+-- | block -> { decl* }
+blockStP = takeType S.LEFT_BRACE *> (BlockStmt <$> many declP) <* takeType S.RIGHT_BRACE
 
 -- | expressionStmt -> expression ";"
-exprStP = ExprStmt <$> exprP
+exprStP = ExprStmt <$> exprP <* semicolonP
 
--- | print          → "print" expr
-printStP = PrintStmt <$> (takeType S.PRINT *> exprP)
+-- | print          → "print" expr ";"
+printStP = PrintStmt <$> (takeType S.PRINT *> exprP) <* semicolonP
 
 varDeclP :: Parser Decl
 varDeclP = VarDecl <$> var <*> init' <* semicolonP

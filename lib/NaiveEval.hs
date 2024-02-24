@@ -97,6 +97,7 @@ runDecl (AST.VarDecl var init) = runVarDecl var init
 runStmt :: AST.Stmt -> VMstate ()
 runStmt (AST.ExprStmt e) = void $ eval e
 runStmt (AST.PrintStmt e) = runPrint e
+runStmt (AST.IfStmt cond t f) = runITE cond t $ fromMaybe (AST.BlockStmt []) f
 runStmt (AST.BlockStmt ss) = do
   modify envPush
   runDecls ss
@@ -104,6 +105,12 @@ runStmt (AST.BlockStmt ss) = do
 
 runPrint :: AST.Expr -> VMstate ()
 runPrint e = eval e >>= liftIO . print
+
+runITE :: AST.Expr -> AST.Stmt -> AST.Stmt -> VMstate ()
+runITE cond brT brF = do
+  c <- eval cond
+  let br = if unwrapBool c then brT else brF
+  runStmt $ AST.BlockStmt [AST.StmtDecl br]
 
 runVarDecl :: AST.Ident -> Maybe AST.Expr -> VMstate ()
 runVarDecl id init =

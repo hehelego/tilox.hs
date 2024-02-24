@@ -22,6 +22,7 @@ data Stmt
   = ExprStmt Expr
   | PrintStmt Expr
   | BlockStmt [Decl]
+  | IfStmt Expr Stmt (Maybe Stmt)
 
 -- | the grammar
 -- expression     → literal | unary | binary | grouping ;
@@ -44,6 +45,9 @@ data BinaryOp = Eq | Neq | Lt | Leq | Gt | Geq | Plus | Minus | Times | Divides
 
 newtype Ident = Ident String deriving (Eq)
 
+instance Show Prog where
+  show (Prog decls) = show $ BlockStmt decls
+
 instance Show Decl where
   show (StmtDecl stmt) = show stmt
   show (VarDecl var init) = "var " ++ show var ++ initval ++ ";"
@@ -55,7 +59,21 @@ instance Show Decl where
 instance Show Stmt where
   show (ExprStmt e) = show e ++ ";"
   show (PrintStmt e) = "print " ++ show e ++ ";"
-  show (BlockStmt stmts) = "{" ++ unwords (show <$> stmts) ++ "}"
+  show (IfStmt cond t f) =
+    "if ("
+      ++ show cond
+      ++ ")\n"
+      ++ show t
+      ++ elseBr
+    where
+      elseBr = case f of
+        Just brF -> "else\n" ++ show brF
+        Nothing -> ""
+  show (BlockStmt ss) = "{\n" ++ inner ++ "}\n"
+    where
+      inner = intercalate "\n" ss'
+      ss' = show <$> ss
+      wrap x = '\t' : show x ++ "\n"
 
 instance Show Ident where
   show (Ident id) = id
