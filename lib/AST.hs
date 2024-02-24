@@ -10,6 +10,8 @@ module AST
   )
 where
 
+import Data.List (intercalate)
+
 newtype Prog = Prog [Decl]
 
 data Decl
@@ -19,6 +21,7 @@ data Decl
 data Stmt
   = ExprStmt Expr
   | PrintStmt Expr
+  | BlockStmt [Decl]
 
 -- | the grammar
 -- expression     → literal | unary | binary | grouping ;
@@ -52,6 +55,7 @@ instance Show Decl where
 instance Show Stmt where
   show (ExprStmt e) = show e ++ ";"
   show (PrintStmt e) = "print " ++ show e ++ ";"
+  show (BlockStmt stmts) = "{" ++ unwords (show <$> stmts) ++ "}"
 
 instance Show Ident where
   show (Ident id) = id

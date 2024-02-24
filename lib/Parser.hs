@@ -83,9 +83,10 @@ semicolonP = takeType S.SEMICOLON $> ()
 -- program parser
 
 stmtP, exprStP, printStP :: Parser Stmt
-stmtP = (exprStP `orElse` printStP) <* semicolonP
-
--- stmtP = (asgnStP `orElse` exprStP `orElse` printStP) <* semicolonP
+stmtP = multi `orElse` single
+  where
+    multi = takeType S.LEFT_BRACE *> (BlockStmt <$> many declP) <* takeType S.RIGHT_BRACE
+    single = (exprStP `orElse` printStP) <* semicolonP
 
 -- | expressionStmt -> expression ";"
 exprStP = ExprStmt <$> exprP
@@ -106,9 +107,9 @@ declP = varDeclP `orElse` stmt
     stmt = StmtDecl <$> stmtP
 
 progP :: Parser Prog
-progP = fmap Prog $ decls <* eofP
+progP = Prog <$> decls
   where
-    decls = (:) <$> declP <*> decls `orElse` pure []
+    decls = many declP <* eofP
 
 failP :: ErrMsg -> Parser a
 failP msg = Parser $ \toks ->
@@ -213,3 +214,6 @@ chainP leaveP connP = leaveP >>= chain
           chain $ conn lhs rhs
       )
         `orElse` pure lhs
+
+many :: Parser a -> Parser [a]
+many p = (:) <$> p <*> many p `orElse` pure []

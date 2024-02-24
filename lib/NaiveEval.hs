@@ -12,11 +12,11 @@ module NaiveEval
 where
 
 import qualified AST
-import Control.Monad (void, (>=>))
+import Control.Monad (void, when, (>=>))
 import Control.Monad.IO.Class (MonadIO (liftIO))
 import Data.Bifunctor (first)
 import Data.Functor (($>))
-import Data.Maybe (isJust)
+import Data.Maybe (fromMaybe, isJust)
 
 data ValType = NilT | BoolT | NumberT | StringT deriving (Eq)
 
@@ -81,11 +81,14 @@ instance Show Err where
 
 type VMstate a = State Env Err a
 
-runProg :: AST.Prog -> VMstate ()
-runProg (AST.Prog decls) = foldl (>>) init decls'
+runDecls :: [AST.Decl] -> VMstate ()
+runDecls decls = foldl (>>) init decls'
   where
     init = pure ()
     decls' = runDecl <$> decls
+
+runProg :: AST.Prog -> VMstate ()
+runProg (AST.Prog decls) = runDecls decls
 
 runDecl :: AST.Decl -> VMstate ()
 runDecl (AST.StmtDecl stmt) = runStmt stmt
@@ -94,6 +97,10 @@ runDecl (AST.VarDecl var init) = runVarDecl var init
 runStmt :: AST.Stmt -> VMstate ()
 runStmt (AST.ExprStmt e) = void $ eval e
 runStmt (AST.PrintStmt e) = runPrint e
+runStmt (AST.BlockStmt ss) = do
+  modify envPush
+  runDecls ss
+  modify $ \env -> fromMaybe env (envPop env)
 
 runPrint :: AST.Expr -> VMstate ()
 runPrint e = eval e >>= liftIO . print
@@ -102,9 +109,7 @@ runVarDecl :: AST.Ident -> Maybe AST.Expr -> VMstate ()
 runVarDecl id init =
   do
     env <- get
-    case envLookup id env of
-      Just _ -> raise $ AlreadyDeclared id
-      Nothing -> pure ()
+    when (assgnHas id $ assgn env) $ raise (AlreadyDeclared id)
     iv <- maybe (pure Nil) eval init
     modify $ envAdd id iv
 
