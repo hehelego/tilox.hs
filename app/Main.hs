@@ -6,6 +6,7 @@ import qualified NaiveEval as Eval
 import qualified Parser
 import qualified Scanner
 import System.Environment (getArgs)
+import System.Exit (exitFailure, exitSuccess)
 import System.IO
 
 main :: IO ()
@@ -16,7 +17,21 @@ main = do
     [] -> repl Eval.emptyEnv
 
 exec :: String -> IO ()
-exec source = undefined
+exec source = do
+  let (res, toks) = Scanner.scan source
+  toks <- case res of
+    Left err -> putStrLn ("Scanner error: " ++ Scanner.reason err) >> exitFailure
+    _ -> pure toks
+
+  let (res, _) = Parser.runParser Parser.progP toks
+  prog <- case res of
+    Left err -> putStrLn ("Parser error: " ++ Parser.errMsg err) >> exitFailure
+    Right prog -> pure prog
+
+  (res, _) <- Eval.runState (Eval.runProg prog) Eval.emptyEnv
+  case res of
+    Left err -> putStrLn ("Execution error: " ++ show err) >> exitFailure
+    Right _ -> exitSuccess
 
 repl :: Eval.Env -> IO ()
 repl env = do
