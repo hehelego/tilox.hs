@@ -117,5 +117,5 @@ instance Show BinaryOp where
   show Minus = "-"
   show Times = "*"
   show Divides = "/"
-  show And = "&&"
-  show Or = "||"
+  show And = "and"
+  show Or = "or"

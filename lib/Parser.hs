@@ -206,6 +206,8 @@ binaryOpP opTypes = parseOp <$> takeCheck (`elem` opTypes) "expecting a binary o
       S.MINUS -> Minus
       S.STAR -> Times
       S.SLASH -> Divides
+      S.AND -> And
+      S.OR -> Or
 
 -- parser definition section
 

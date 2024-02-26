@@ -22,6 +22,12 @@ data ValType = NilT | BoolT | NumberT | StringT deriving (Eq)
 
 data Val = Nil | Bool Bool | Number Double | String String deriving (Eq)
 
+typeof :: Val -> ValType
+typeof Nil = NilT
+typeof (Bool _) = BoolT
+typeof (Number _) = NumberT
+typeof (String _) = StringT
+
 instance Show ValType where
   show NilT = "[type: nil]"
   show BoolT = "[type: bool]"
@@ -104,13 +110,13 @@ runStmt (AST.ForStmt init cond next body) = runNested $ do
   loop
   where
     loop = do
-      ok <- eval cond
-      when (unwrapBool ok) $ runStmt body >> runStmt (AST.ExprStmt next) >> loop
+      ok <- eval cond >>= unwrapBool
+      when ok $ runStmt body >> runStmt (AST.ExprStmt next) >> loop
 runStmt (AST.WhileStmt cond body) = loop
   where
     loop = do
-      ok <- eval cond
-      when (unwrapBool ok) $ runStmt body >> loop
+      ok <- eval cond >>= unwrapBool
+      when ok $ runStmt body >> loop
 runStmt (AST.BlockStmt ss) = runNested $ runDecls ss
 
 runPrint :: AST.Expr -> VMstate ()
@@ -118,8 +124,8 @@ runPrint e = eval e >>= liftIO . print
 
 runITE :: AST.Expr -> AST.Stmt -> AST.Stmt -> VMstate ()
 runITE cond brT brF = do
-  c <- eval cond
-  let br = if unwrapBool c then brT else brF
+  c <- eval cond >>= unwrapBool
+  let br = if c then brT else brF
   runStmt $ AST.BlockStmt [AST.StmtDecl br]
 
 runNested r = do
@@ -142,21 +148,21 @@ evalAssign id e = do
     then eval e >>= modify . envModify id
     else raise $ NotInScope id
 
-unwrapBool :: Val -> Bool
-unwrapBool (Bool b) = b
-unwrapBool _ = error "not a boolean value"
+unwrapBool :: Val -> VMstate Bool
+unwrapBool (Bool b) = pure b
+unwrapBool x = raise $ TypeMismatch {expectedT = BoolT, actualT = typeof x}
 
-unwrapNum :: Val -> Double
-unwrapNum (Number n) = n
-unwrapNum _ = error "not a number value"
+unwrapNum :: Val -> VMstate Double
+unwrapNum (Number n) = pure n
+unwrapNum x = raise $ TypeMismatch {expectedT = NumberT, actualT = typeof x}
 
-unwrapString :: Val -> String
-unwrapString (String s) = s
-unwrapString _ = error "not a string value"
+unwrapString :: Val -> VMstate String
+unwrapString (String s) = pure s
+unwrapString x = raise $ TypeMismatch {expectedT = StringT, actualT = typeof x}
 
-unwrapNil :: Val -> ()
-unwrapNil Nil = ()
-unwrapNil _ = error "not a nil value"
+unwrapNil :: Val -> VMstate ()
+unwrapNil Nil = pure ()
+unwrapNil x = raise $ TypeMismatch {expectedT = NilT, actualT = typeof x}
 
 eval :: AST.Expr -> VMstate Val
 eval (AST.LiteralExpr lit) = evalLiteral lit
@@ -178,20 +184,23 @@ evalLiteral AST.Nil = pure Nil
 evalLiteral _ = error "unsupported literal"
 
 evalUnary :: AST.UnaryOp -> AST.Expr -> VMstate Val
-evalUnary op sub = let v = eval sub in opfunc op <$> v
+evalUnary op sub = eval sub >>= opfunc op
   where
+    opfunc :: AST.UnaryOp -> Val -> VMstate Val
     opfunc op = case op of
       AST.Neg -> negf
       AST.Not -> notf
       _ -> error "unsupported unary operator"
-    negf v = Number (-unwrapNum v)
-    notf v = Bool (not $ unwrapBool v)
+    negf v = Bool . not <$> unwrapBool v
+    notf v = Number . (0 -) <$> unwrapNum v
 
 evalBinary :: AST.BinaryOp -> AST.Expr -> AST.Expr -> VMstate Val
-evalBinary op lhs rhs =
-  let lv = eval lhs; rv = eval rhs
-   in opfunc op <$> lv <*> rv
+evalBinary op lhs rhs = do
+  lv <- eval lhs
+  rv <- eval rhs
+  opfunc op lv rv
   where
+    opfunc :: AST.BinaryOp -> Val -> Val -> VMstate Val
     opfunc op = case op of
       AST.Eq -> eq
       AST.Neq -> neq
@@ -203,10 +212,15 @@ evalBinary op lhs rhs =
       AST.Minus -> minus
       AST.Times -> times
       AST.Divides -> divides
+      AST.And -> and
+      AST.Or -> or
       _ -> error "unknown binary operator"
-    makeop lift unwrap op l r = lift $ unwrap l `op` unwrap r
-    eq = makeop Bool id (==)
-    neq = makeop Bool id (/=)
+    makeop lift unwrap op l r = do
+      lv <- unwrap l
+      rv <- unwrap r
+      pure $ lift $ op lv rv
+    eq = makeop Bool pure (==)
+    neq = makeop Bool pure (/=)
     lt = makeop Bool unwrapNum (<)
     leq = makeop Bool unwrapNum (<=)
     gt = makeop Bool unwrapNum (<=)
@@ -215,6 +229,8 @@ evalBinary op lhs rhs =
     minus = makeop Number unwrapNum (-)
     times = makeop Number unwrapNum (*)
     divides = makeop Number unwrapNum (/)
+    and = makeop Bool unwrapBool (&&)
+    or = makeop Bool unwrapBool (||)
 
 -- | Stateful computation that may fail and may have side effect
 -- s: state
