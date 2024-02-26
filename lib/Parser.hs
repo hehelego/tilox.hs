@@ -15,18 +15,24 @@ import qualified Scanner as S
 
 -- expression parser
 
-exprP, asgnP, equalityP, compP, termP, factorP, unaryP, primaryP, identRefP, numberP, stringP, boolP, nilP :: Parser Expr
+exprP, asgnP, logicalOrP, logicalAndP, equalityP, compP, termP, factorP, unaryP, primaryP, identRefP, numberP, stringP, boolP, nilP :: Parser Expr
 
 -- | expression     → assignment ;
 exprP = asgnP `orElse` failP "no expression"
 
--- | assignment     → IDENTIFIER "=" assignment | equality ;
+-- | assignment     → IDENTIFIER "=" assignment | logical_or ;
 asgnP = do
-  lhs <- equalityP
+  lhs <- logicalOrP
   op <- peek
   case (lhs, S.tokType op) of
     (LiteralExpr (Ref id), S.EQUAL) -> consume >> AsgnExpr id <$> asgnP
     _ -> pure lhs
+
+-- | logic_or       → logic_and ( "or" logic_and )* ;
+logicalOrP = chainP logicalAndP (binaryOpP [S.OR]) `orElse` failP "no logical or expression"
+
+-- | logic_and      → equality ( "and" equality )* ;
+logicalAndP = chainP equalityP (binaryOpP [S.AND]) `orElse` failP "no logical and expression"
 
 -- | equality       → comparison ( ( "!=" | "==" ) comparison )* ;
 equalityP = chainP compP (binaryOpP [S.EQUAL_EQUAL, S.BANG_EQUAL]) `orElse` failP "no equality expression"
@@ -83,8 +89,9 @@ semicolonP = takeType S.SEMICOLON $> ()
 
 -- program parser
 
-stmtP, exprStP, printStP, blockStP, ifP :: Parser Stmt
-stmtP = blockStP `orElse` printStP `orElse` ifP `orElse` exprStP
+stmtP, emptyStP, exprStP, printStP, blockStP, ifP, whileP, forP :: Parser Stmt
+stmtP = emptyStP `orElse` blockStP `orElse` printStP `orElse` ifP `orElse` forP `orElse` whileP `orElse` exprStP
+emptyStP = semicolonP $> EmptyStmt
 ifP = do
   takeType S.IF
   cond <- groupedP exprP
@@ -92,9 +99,26 @@ ifP = do
   elseKw <- peek
   brF <-
     if S.tokType elseKw == S.ELSE
-      then consume >> Just <$> stmtP
-      else pure Nothing
+      then consume >> stmtP
+      else pure EmptyStmt
   pure $ IfStmt cond brT brF
+whileP = do
+  takeType S.WHILE
+  cond <- groupedP exprP
+  WhileStmt cond <$> stmtP
+forP = do
+  takeType S.FOR
+  (init, cond, next) <- groupedP $ do
+    init <- initP
+    cond <- exprP
+    semicolonP
+    next <- exprP
+    pure (init, cond, next)
+  ForStmt init cond next <$> stmtP
+  where
+    initP =
+      varDeclP
+        `orElse` fmap StmtDecl (exprStP `orElse` emptyStP)
 
 -- | block -> { decl* }
 blockStP = takeType S.LEFT_BRACE *> (BlockStmt <$> many declP) <* takeType S.RIGHT_BRACE

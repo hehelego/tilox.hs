@@ -1,3 +1,5 @@
+{-# LANGUAGE GADTs #-}
+
 module AST
   ( Expr (..),
     Literal (..),
@@ -22,7 +24,10 @@ data Stmt
   = ExprStmt Expr
   | PrintStmt Expr
   | BlockStmt [Decl]
-  | IfStmt Expr Stmt (Maybe Stmt)
+  | IfStmt Expr Stmt Stmt -- if (cond) branch else branch
+  | ForStmt Decl Expr Expr Stmt -- for(init-decl;cond-expr;next-expr) body
+  | WhileStmt Expr Stmt -- while(condition) body
+  | EmptyStmt
 
 -- | the grammar
 -- expression     → literal | unary | binary | grouping ;
@@ -41,7 +46,7 @@ data Literal = Ref Ident | Number Double | String String | Bool Bool | Nil
 
 data UnaryOp = Neg | Not
 
-data BinaryOp = Eq | Neq | Lt | Leq | Gt | Geq | Plus | Minus | Times | Divides
+data BinaryOp = Eq | Neq | Lt | Leq | Gt | Geq | Plus | Minus | Times | Divides | And | Or
 
 newtype Ident = Ident String deriving (Eq)
 
@@ -59,16 +64,24 @@ instance Show Decl where
 instance Show Stmt where
   show (ExprStmt e) = show e ++ ";"
   show (PrintStmt e) = "print " ++ show e ++ ";"
-  show (IfStmt cond t f) = unlines [part1, part2, part3]
+  show (IfStmt cond t f) = unlines [part1, part2, part3, part4]
     where
       part1 = "if (" ++ show cond ++ ")"
       part2 = pad $ show t
-      part3 = case f of
-        Just brF -> unlines ["else", pad $ show brF]
-        Nothing -> ""
+      part3 = "else"
+      part4 = pad $ show f
+  show (ForStmt init cond next body) = unlines [part1, part2]
+    where
+      part1 = unwords ["for", "(", show init, show cond, ";", show next, ")"]
+      part2 = pad $ show body
+  show (WhileStmt cond body) = unlines [part1, part2]
+    where
+      part1 = unwords ["while", "(", show cond, ")"]
+      part2 = pad $ show body
   show (BlockStmt ss) = "{\n" ++ inner ++ "\n}"
     where
       inner = pad $ intercalate "\n" $ show <$> ss
+  show EmptyStmt = ";"
 
 pad :: String -> String
 pad = unlines . fmap ('\t' :) . lines
@@ -104,3 +117,5 @@ instance Show BinaryOp where
   show Minus = "-"
   show Times = "*"
   show Divides = "/"
+  show And = "&&"
+  show Or = "||"

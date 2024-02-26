@@ -32,7 +32,7 @@ instance Show Val where
   show Nil = "nil"
   show (Bool b) = if b then "true" else "false"
   show (Number n) = show n
-  show (String s) = show s
+  show (String s) = s
   show _ = error "unsupported value"
 
 type Assignment = [(AST.Ident, Val)]
@@ -95,13 +95,23 @@ runDecl (AST.StmtDecl stmt) = runStmt stmt
 runDecl (AST.VarDecl var init) = runVarDecl var init
 
 runStmt :: AST.Stmt -> VMstate ()
+runStmt AST.EmptyStmt = pure ()
 runStmt (AST.ExprStmt e) = void $ eval e
 runStmt (AST.PrintStmt e) = runPrint e
-runStmt (AST.IfStmt cond t f) = runITE cond t $ fromMaybe (AST.BlockStmt []) f
-runStmt (AST.BlockStmt ss) = do
-  modify envPush
-  runDecls ss
-  modify $ \env -> fromMaybe env (envPop env)
+runStmt (AST.IfStmt cond t f) = runITE cond t f
+runStmt (AST.ForStmt init cond next body) = runNested $ do
+  runDecl init
+  loop
+  where
+    loop = do
+      ok <- eval cond
+      when (unwrapBool ok) $ runStmt body >> runStmt (AST.ExprStmt next) >> loop
+runStmt (AST.WhileStmt cond body) = loop
+  where
+    loop = do
+      ok <- eval cond
+      when (unwrapBool ok) $ runStmt body >> loop
+runStmt (AST.BlockStmt ss) = runNested $ runDecls ss
 
 runPrint :: AST.Expr -> VMstate ()
 runPrint e = eval e >>= liftIO . print
@@ -111,6 +121,11 @@ runITE cond brT brF = do
   c <- eval cond
   let br = if unwrapBool c then brT else brF
   runStmt $ AST.BlockStmt [AST.StmtDecl br]
+
+runNested r = do
+  modify envPush
+  r
+  modify $ \env -> fromMaybe env (envPop env)
 
 runVarDecl :: AST.Ident -> Maybe AST.Expr -> VMstate ()
 runVarDecl id init =
