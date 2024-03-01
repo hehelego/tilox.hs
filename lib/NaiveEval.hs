@@ -190,9 +190,8 @@ evalUnary op sub = eval sub >>= opfunc op
     opfunc op = case op of
       AST.Neg -> negf
       AST.Not -> notf
-      _ -> error "unsupported unary operator"
-    negf v = Bool . not <$> unwrapBool v
-    notf v = Number . (0 -) <$> unwrapNum v
+    notf v = Bool . not <$> unwrapBool v
+    negf v = Number . (0 -) <$> unwrapNum v
 
 evalBinary :: AST.BinaryOp -> AST.Expr -> AST.Expr -> VMstate Val
 evalBinary op lhs rhs = do
