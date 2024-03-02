@@ -15,7 +15,7 @@ import qualified Scanner as S
 
 -- expression parser
 
-exprP, asgnP, logicalOrP, logicalAndP, equalityP, compP, termP, factorP, unaryP, primaryP, identRefP, numberP, stringP, boolP, nilP :: Parser Expr
+exprP, asgnP, logicalOrP, logicalAndP, equalityP, compP, termP, factorP, unaryP, callP, primaryP, identRefP, numberP, stringP, boolP, nilP :: Parser Expr
 
 -- | expression     → assignment ;
 exprP = asgnP `orElse` failP "no expression"
@@ -46,8 +46,38 @@ termP = chainP factorP (binaryOpP [S.MINUS, S.PLUS]) `orElse` failP "no term exp
 -- | factor         → unary ( ( "/" | "*" ) unary )* ;
 factorP = chainP unaryP (binaryOpP [S.SLASH, S.STAR]) `orElse` failP "no factor expression"
 
--- | unary          → ( "!" | "-" ) unary | primary ;
-unaryP = (unaryOpP <*> unaryP) `orElse` primaryP `orElse` failP "no unary expression"
+-- | unary          → ( "!" | "-" ) unary | call ;
+unaryP = (unaryOpP <*> unaryP) `orElse` callP `orElse` failP "no unary expression"
+
+-- | call           → primary ( "(" arguments? ")" )* ;
+-- arguments      → expression ( "," expression )* ;
+callP =
+  do
+    p <- primaryP
+    argsLPar <- peek
+    if S.tokType argsLPar == S.LEFT_PAREN
+      then consume >> CallExpr p <$> argsP
+      else pure p
+  where
+    argsP = do
+      p <- peek
+      if S.tokType p == S.RIGHT_PAREN
+        then consume $> []
+        else do
+          head <- exprP
+          rest <- parseRest []
+          pure $ head : rest
+    parseRest acc = do
+      p <- peek
+      case S.tokType p of
+        S.COMMA -> do
+          consume
+          e <- exprP
+          parseRest $ acc ++ [e]
+        S.RIGHT_PAREN -> do
+          consume
+          pure acc
+        _ -> failP "error while parsing arguments"
 
 -- | primary        → NUMBER | STRING | "true" | "false" | "nil" | "(" expression ")" ;
 primaryP = numberP `orElse` stringP `orElse` boolP `orElse` nilP `orElse` groupedP exprP `orElse` identRefP `orElse` failP "no primary expression"
@@ -110,15 +140,15 @@ forP = do
   takeType S.FOR
   (init, cond, next) <- groupedP $ do
     init <- initP
+    semicolonP
     cond <- exprP
     semicolonP
     next <- exprP
     pure (init, cond, next)
   ForStmt init cond next <$> stmtP
   where
-    initP =
-      varDeclP
-        `orElse` fmap StmtDecl (exprStP `orElse` emptyStP)
+    exprInit = StmtDecl . ExprStmt <$> exprP
+    initP = varDeclP `orElse` exprInit
 
 -- | block -> { decl* }
 blockStP = takeType S.LEFT_BRACE *> (BlockStmt <$> many declP) <* takeType S.RIGHT_BRACE
@@ -130,16 +160,17 @@ exprStP = ExprStmt <$> exprP <* semicolonP
 printStP = PrintStmt <$> (takeType S.PRINT *> exprP) <* semicolonP
 
 varDeclP :: Parser Decl
-varDeclP = VarDecl <$> var <*> init' <* semicolonP
+varDeclP = VarDecl <$> var <*> init'
   where
     var = takeType S.VAR *> identP
     init = takeType S.EQUAL *> exprP
     init' = fmap Just init `orElse` pure Nothing
 
 declP :: Parser Decl
-declP = varDeclP `orElse` stmt
+declP = var `orElse` stmt
   where
     stmt = StmtDecl <$> stmtP
+    var = varDeclP <* semicolonP
 
 progP :: Parser Prog
 progP = Prog <$> decls
@@ -241,7 +272,7 @@ p `orElse` q = Parser $ \toks -> case runParser p toks of
   (Right x, toks') -> (Right x, toks')
 
 -- | Parse an expression tree
-chainP :: Parser Expr -> Parser (Expr -> Expr -> Expr) -> Parser Expr
+chainP :: Parser a -> Parser (a -> a -> a) -> Parser a
 chainP leaveP connP = leaveP >>= chain
   where
     chain lhs =

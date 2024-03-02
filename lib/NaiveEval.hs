@@ -1,5 +1,3 @@
-{-# OPTIONS_GHC -Wno-overlapping-patterns #-}
-
 module NaiveEval
   ( ValType (..),
     Val (..),
@@ -17,29 +15,43 @@ import Control.Monad.IO.Class (MonadIO (liftIO))
 import Data.Bifunctor (first)
 import Data.Functor (($>))
 import Data.Maybe (fromMaybe, isJust)
+import GHC.Clock (getMonotonicTime)
 
-data ValType = NilT | BoolT | NumberT | StringT deriving (Eq)
+data ValType = NilT | BoolT | NumberT | StringT | FuncT deriving (Eq)
 
-data Val = Nil | Bool Bool | Number Double | String String deriving (Eq)
+type ObjectId = Int
+
+data Val = Nil | Bool Bool | Number Double | String String | Func ObjectId Int ([Val] -> VMstate Val)
+
+instance Eq Val where
+  x == y = case (x, y) of
+    (Nil, Nil) -> True
+    (Bool b, Bool b') -> b == b'
+    (Number n, Number n') -> n == n'
+    (String s, String s') -> s == s'
+    (Func id _ _, Func id' _ _) -> id == id'
+    _ -> False
 
 typeof :: Val -> ValType
 typeof Nil = NilT
 typeof (Bool _) = BoolT
 typeof (Number _) = NumberT
 typeof (String _) = StringT
+typeof (Func {}) = FuncT
 
 instance Show ValType where
   show NilT = "[type: nil]"
   show BoolT = "[type: bool]"
   show NumberT = "[type: number]"
   show StringT = "[type: string]"
+  show FuncT = "[type: function]"
 
 instance Show Val where
   show Nil = "nil"
   show (Bool b) = if b then "true" else "false"
   show (Number n) = show n
   show (String s) = s
-  show _ = error "unsupported value"
+  show (Func id _ _) = "<Func: id=" ++ show id ++ ">"
 
 type Assignment = [(AST.Ident, Val)]
 
@@ -54,7 +66,12 @@ data Env = Env
     parent :: Maybe Env
   }
 
-emptyEnv = Env [] Nothing
+emptyEnv =
+  Env
+    { assgn =
+        [(AST.Ident "clock", Func 0 0 (const $ liftIO $ Number <$> getMonotonicTime))],
+      parent = Nothing
+    }
 
 envLookup :: AST.Ident -> Env -> Maybe Val
 envLookup id env = if isJust cur then cur else par
@@ -77,13 +94,13 @@ envPush env = Env {assgn = [], parent = Just env}
 envPop :: Env -> Maybe Env
 envPop = parent
 
-data Err = TypeMismatch {expectedT :: ValType, actualT :: ValType} | NotInScope {referred :: AST.Ident} | AlreadyDeclared {redef :: AST.Ident}
+data Err = TypeMismatch {expectedT :: ValType, actualT :: ValType} | NotInScope {referred :: AST.Ident} | AlreadyDeclared {redef :: AST.Ident} | ArityMisMatch {expectedArgs :: Int, actualArgs :: Int}
 
 instance Show Err where
-  show (TypeMismatch exp act) = "ERROR: type miss match," ++ "expected " ++ show exp ++ "actual " ++ show act
+  show (TypeMismatch expect actual) = "ERROR: type miss match," ++ "expected " ++ show expect ++ "actual " ++ show actual
   show (NotInScope ref) = "ERROR: " ++ show ref ++ " not in scope"
   show (AlreadyDeclared ref) = "ERROR: " ++ show ref ++ " is already defined"
-  show _ = error "unknown error"
+  show (ArityMisMatch expect actual) = "ERROR: expecting " ++ show expect ++ "args but given " ++ show actual
 
 type VMstate a = State Env Err a
 
@@ -169,7 +186,7 @@ eval (AST.LiteralExpr lit) = evalLiteral lit
 eval (AST.UnaryExpr uop sub) = evalUnary uop sub
 eval (AST.BinaryExpr bop lhs rhs) = evalBinary bop lhs rhs
 eval (AST.AsgnExpr id e) = evalAssign id e $> Nil
-eval _ = error "unsupported expression"
+eval (AST.CallExpr func args) = evalCall func args
 
 evalLiteral :: AST.Literal -> VMstate Val
 evalLiteral (AST.Ref ident) = do
@@ -181,7 +198,6 @@ evalLiteral (AST.Number n) = pure $ Number n
 evalLiteral (AST.String s) = pure $ String s
 evalLiteral (AST.Bool b) = pure $ Bool b
 evalLiteral AST.Nil = pure Nil
-evalLiteral _ = error "unsupported literal"
 
 evalUnary :: AST.UnaryOp -> AST.Expr -> VMstate Val
 evalUnary op sub = eval sub >>= opfunc op
@@ -213,7 +229,6 @@ evalBinary op lhs rhs = do
       AST.Divides -> divides
       AST.And -> and
       AST.Or -> or
-      _ -> error "unknown binary operator"
     makeop lift unwrap op l r = do
       lv <- unwrap l
       rv <- unwrap r
@@ -230,6 +245,17 @@ evalBinary op lhs rhs = do
     divides = makeop Number unwrapNum (/)
     and = makeop Bool unwrapBool (&&)
     or = makeop Bool unwrapBool (||)
+
+evalCall :: AST.Expr -> [AST.Expr] -> VMstate Val
+evalCall func args = do
+  f <- eval func
+  let argsCnt = length args
+  case f of
+    Func _ arity body ->
+      if argsCnt == arity
+        then mapM eval args >>= body
+        else raise $ ArityMisMatch {expectedArgs = arity, actualArgs = argsCnt}
+    _ -> raise $ TypeMismatch {expectedT = FuncT, actualT = typeof f}
 
 -- | Stateful computation that may fail and may have side effect
 -- s: state

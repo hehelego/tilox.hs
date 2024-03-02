@@ -38,6 +38,7 @@ data Stmt
 -- operator       → "==" | "!=" | "<" | "<=" | ">" | ">=" | "+"  | "-"  | "*" | "/" ;
 data Expr
   = LiteralExpr Literal
+  | CallExpr Expr [Expr]
   | UnaryExpr UnaryOp Expr
   | BinaryExpr BinaryOp Expr Expr
   | AsgnExpr Ident Expr
@@ -91,6 +92,9 @@ instance Show Ident where
 
 instance Show Expr where
   show (LiteralExpr lit) = show lit
+  show (CallExpr func args) = show func ++ "(" ++ callArgs ++ ")"
+    where
+      callArgs = intercalate "," $ show <$> args
   show (UnaryExpr op e) = "(" ++ show op ++ " " ++ show e ++ ")"
   show (BinaryExpr op l r) = "(" ++ show l ++ " " ++ show op ++ " " ++ show r ++ ")"
   show (AsgnExpr id e) = show id ++ " = " ++ show e
