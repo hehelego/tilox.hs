@@ -1,6 +1,7 @@
 module Parser
   ( Parser (..),
     ParseErr (..),
+    parse,
     exprP,
     stmtP,
     declP,
@@ -12,6 +13,12 @@ import AST
 import Data.Bifunctor (first)
 import Data.Functor (($>))
 import qualified Scanner as S
+
+-- | user facing interface: parse a lox program from a token stream
+parse :: [S.Token] -> (Either ParseErr (), AST.Prog)
+parse toks = case fst $ runParser progP toks of
+  Left e -> (Left e, AST.Prog [])
+  Right prog -> (Right (), prog)
 
 -- expression parser
 

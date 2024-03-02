@@ -2,19 +2,20 @@ module Main where
 
 import qualified AST
 import Control.Monad (mapM_)
+import Data.Functor (($>))
 import qualified NaiveEval as Eval
 import qualified Parser
 import qualified Scanner
 import System.Environment (getArgs)
 import System.Exit (exitFailure, exitSuccess)
-import System.IO
+import System.IO (hFlush, stdout)
 
 main :: IO ()
 main = do
   args <- getArgs
   case args of
     fp : _ -> readFile fp >>= exec
-    [] -> repl Eval.emptyEnv
+    [] -> repl Eval.initEnv
 
 exec :: String -> IO ()
 exec source = do
@@ -23,36 +24,33 @@ exec source = do
     Left err -> putStrLn ("Scanner error: " ++ Scanner.reason err) >> exitFailure
     _ -> pure toks
 
-  let (res, _) = Parser.runParser Parser.progP toks
+  let (res, prog) = Parser.parse toks
   prog <- case res of
     Left err -> putStrLn ("Parser error: " ++ Parser.errMsg err) >> exitFailure
-    Right prog -> pure prog
+    _ -> pure prog
 
-  (res, _) <- Eval.runState (Eval.runProg prog) Eval.emptyEnv
+  (res, _) <- Eval.run Eval.initEnv prog
   case res of
     Left err -> putStrLn ("Execution error: " ++ show err) >> exitFailure
-    Right _ -> exitSuccess
+    _ -> exitSuccess
 
 repl :: Eval.Env -> IO ()
 repl env = do
-  putStr "In> "
-  hFlush stdout
-  r <- getLine
-  putStrLn "=== tokenization ==="
-  let (res, toks) = Scanner.scan r
+  input <- putStr "In> " >> hFlush stdout >> getLine
+
+  putStrLn "=== tokenizing ==="
+  let (res, toks) = Scanner.scan input
   case res of
     Left err -> putStrLn $ "ERROR: " ++ Scanner.reason err
     _ -> pure ()
+
   putStrLn "=== parsing ==="
-  let (res, toks') = Parser.runParser Parser.progP toks
+  let (res, prog) = Parser.parse toks
   case res of
-    Left err -> do
-      putStrLn $ "ERROR: " ++ Parser.errMsg err
-      repl env
-    Right prog@(AST.Prog stmts) -> do
-      mapM_ print stmts
-      putStrLn "=== evaluating ==="
-      (e, env') <- Eval.runState (Eval.runProg prog) env
-      putStrLn "=== execution result ==="
-      print e
-      repl env'
+    Left err -> putStrLn $ "ERROR: " ++ Parser.errMsg err
+    _ -> pure ()
+
+  print prog >> putStrLn "=== executing ==="
+  (res, env') <- Eval.run env prog
+  putStrLn "=== result ===" >> print res
+  repl env'

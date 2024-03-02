@@ -3,9 +3,10 @@ module NaiveEval
     Val (..),
     Env (..),
     VMstate (..),
+    run,
     runProg,
     runState,
-    emptyEnv,
+    initEnv,
   )
 where
 
@@ -66,7 +67,7 @@ data Env = Env
     parent :: Maybe Env
   }
 
-emptyEnv =
+initEnv =
   Env
     { assgn =
         [ (AST.Ident "clock", Func 0 0 _getClock),
@@ -119,6 +120,9 @@ instance Show Err where
   show (ArityMisMatch expect actual) = "ERROR: expecting " ++ show expect ++ "args but given " ++ show actual
 
 type VMstate a = State Env Err a
+
+run :: Env -> AST.Prog -> IO (Either Err (), Env)
+run env prog = runState (runProg prog) env
 
 runDecls :: [AST.Decl] -> VMstate ()
 runDecls decls = foldl (>>) init decls'
