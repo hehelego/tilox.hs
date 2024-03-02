@@ -69,9 +69,25 @@ data Env = Env
 emptyEnv =
   Env
     { assgn =
-        [(AST.Ident "clock", Func 0 0 (const $ liftIO $ Number <$> getMonotonicTime))],
+        [ (AST.Ident "clock", Func 0 0 _getClock),
+          (AST.Ident "print", Func 1 1 _printVal),
+          (AST.Ident "strcat", Func 2 2 _strcat),
+          (AST.Ident "toString", Func 3 1 _toStr)
+        ],
       parent = Nothing
     }
+
+_getClock :: a -> VMstate Val
+_getClock = const $ liftIO $ Number <$> getMonotonicTime
+
+_printVal :: [Val] -> VMstate Val
+_printVal (v : _) = liftIO $ print v $> Nil
+
+_strcat :: [Val] -> VMstate Val
+_strcat (s1 : s2 : _) = fmap String $ (++) <$> unwrapString s1 <*> unwrapString s2
+
+_toStr :: [Val] -> VMstate Val
+_toStr (v : _) = pure $ String $ show v
 
 envLookup :: AST.Ident -> Env -> Maybe Val
 envLookup id env = if isJust cur then cur else par
@@ -120,7 +136,6 @@ runDecl (AST.VarDecl var init) = runVarDecl var init
 runStmt :: AST.Stmt -> VMstate ()
 runStmt AST.EmptyStmt = pure ()
 runStmt (AST.ExprStmt e) = void $ eval e
-runStmt (AST.PrintStmt e) = runPrint e
 runStmt (AST.IfStmt cond t f) = runITE cond t f
 runStmt (AST.ForStmt init cond next body) = runNested $ do
   runDecl init
@@ -135,9 +150,6 @@ runStmt (AST.WhileStmt cond body) = loop
       ok <- eval cond >>= unwrapBool
       when ok $ runStmt body >> loop
 runStmt (AST.BlockStmt ss) = runNested $ runDecls ss
-
-runPrint :: AST.Expr -> VMstate ()
-runPrint e = eval e >>= liftIO . print
 
 runITE :: AST.Expr -> AST.Stmt -> AST.Stmt -> VMstate ()
 runITE cond brT brF = do

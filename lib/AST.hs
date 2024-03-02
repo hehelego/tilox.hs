@@ -22,7 +22,6 @@ data Decl
 
 data Stmt
   = ExprStmt Expr
-  | PrintStmt Expr
   | BlockStmt [Decl]
   | IfStmt Expr Stmt Stmt -- if (cond) branch else branch
   | ForStmt Decl Expr Expr Stmt -- for(init-decl;cond-expr;next-expr) body
@@ -64,7 +63,6 @@ instance Show Decl where
 
 instance Show Stmt where
   show (ExprStmt e) = show e ++ ";"
-  show (PrintStmt e) = "print " ++ show e ++ ";"
   show (IfStmt cond t f) = unlines [part1, part2, part3, part4]
     where
       part1 = "if (" ++ show cond ++ ")"

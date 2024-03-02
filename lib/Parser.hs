@@ -119,8 +119,8 @@ semicolonP = takeType S.SEMICOLON $> ()
 
 -- program parser
 
-stmtP, emptyStP, exprStP, printStP, blockStP, ifP, whileP, forP :: Parser Stmt
-stmtP = emptyStP `orElse` blockStP `orElse` printStP `orElse` ifP `orElse` forP `orElse` whileP `orElse` exprStP
+stmtP, emptyStP, exprStP, blockStP, ifP, whileP, forP :: Parser Stmt
+stmtP = emptyStP `orElse` blockStP `orElse` ifP `orElse` forP `orElse` whileP `orElse` exprStP
 emptyStP = semicolonP $> EmptyStmt
 ifP = do
   takeType S.IF
@@ -155,9 +155,6 @@ blockStP = takeType S.LEFT_BRACE *> (BlockStmt <$> many declP) <* takeType S.RIG
 
 -- | expressionStmt -> expression ";"
 exprStP = ExprStmt <$> exprP <* semicolonP
-
--- | print          → "print" expr ";"
-printStP = PrintStmt <$> (takeType S.PRINT *> exprP) <* semicolonP
 
 varDeclP :: Parser Decl
 varDeclP = VarDecl <$> var <*> init'

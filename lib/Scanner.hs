@@ -43,7 +43,6 @@ data Type
   | NIL
   | NOT
   | OR
-  | PRINT
   | RETURN
   | SUPER
   | THIS
@@ -93,7 +92,6 @@ keywords =
     ("nil", NIL),
     ("not", NOT),
     ("or", OR),
-    ("print", PRINT),
     ("return", RETURN),
     ("super", SUPER),
     ("this", THIS),
