@@ -26,6 +26,7 @@ data Stmt
   | IfStmt Expr Stmt Stmt -- if (cond) branch else branch
   | ForStmt Decl Expr Expr Stmt -- for(init-decl;cond-expr;next-expr) body
   | WhileStmt Expr Stmt -- while(condition) body
+  | ReturnStmt Expr -- return value
   | EmptyStmt
 
 -- | the grammar
@@ -83,6 +84,7 @@ instance Show Stmt where
   show (BlockStmt ss) = "{\n" ++ inner ++ "\n}"
     where
       inner = pad $ intercalate "\n" $ show <$> ss
+  show (ReturnStmt e) = "return " ++ show e
   show EmptyStmt = ";"
 
 pad :: String -> String

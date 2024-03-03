@@ -115,13 +115,14 @@ envPush env = Env {assgn = [], parent = Just env}
 envPop :: Env -> Maybe Env
 envPop = parent
 
-data Err = TypeMismatch {expectedT :: ValType, actualT :: ValType} | NotInScope {referred :: AST.Ident} | AlreadyDeclared {redef :: AST.Ident} | ArityMisMatch {expectedArgs :: Int, actualArgs :: Int}
+data Err = TypeMismatch {expectedT :: ValType, actualT :: ValType} | NotInScope {referred :: AST.Ident} | AlreadyDeclared {redef :: AST.Ident} | ArityMisMatch {expectedArgs :: Int, actualArgs :: Int} | Returning Val
 
 instance Show Err where
   show (TypeMismatch expect actual) = "ERROR: type miss match," ++ "expected " ++ show expect ++ "actual " ++ show actual
   show (NotInScope ref) = "ERROR: " ++ show ref ++ " not in scope"
   show (AlreadyDeclared ref) = "ERROR: " ++ show ref ++ " is already defined"
   show (ArityMisMatch expect actual) = "ERROR: expecting " ++ show expect ++ "args but given " ++ show actual
+  show (Returning v) = "Returning value to caller: " ++ show v
 
 type VMstate a = State Env Err a
 
@@ -159,6 +160,9 @@ runStmt (AST.WhileStmt cond body) = loop
       ok <- eval cond >>= unwrapBool
       when ok $ runStmt body >> loop
 runStmt (AST.BlockStmt ss) = runNested $ runDecls ss
+runStmt (AST.ReturnStmt e) = do
+  v <- eval e
+  raise $ Returning v
 
 runITE :: AST.Expr -> AST.Stmt -> AST.Stmt -> VMstate ()
 runITE cond brT brF = do
@@ -187,11 +191,22 @@ runFunDecl name parms body = do
   when (assgnHas name $ assgn env) $ raise (AlreadyDeclared name)
   modify $
     envAdd name $
-      Func name (length parms) $
-        \args -> runNested $ do
-          foldl (>>) (pure ()) $ zipWith (\p a -> modify $ envAdd p a) parms args
-          runStmt body
-          pure Nil
+      Func name (length parms) f
+  where
+    f args = getRet $ exec args
+    getRet st = State $ \s -> do
+      res <- runState st s
+      case res of
+        -- pop env haven't been done yet
+        (Left (Returning rv), s') -> pure (Right rv, fromJust $ envPop s')
+        -- leave as it
+        (Left e, s') -> pure (Left e, s')
+        (Right _, s') -> pure (Right Nil, s')
+    exec args = runNested $ do
+      foldl (>>) (pure ()) $ zipWith (\p a -> modify $ envAdd p a) parms args
+      env <- get
+      let AST.BlockStmt body' = body
+      runDecls body'
 
 -- TODO: return statement
 
