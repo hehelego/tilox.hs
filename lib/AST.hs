@@ -1,5 +1,3 @@
-{-# LANGUAGE GADTs #-}
-
 module AST
   ( Expr (..),
     Literal (..),
@@ -13,12 +11,14 @@ module AST
 where
 
 import Data.List (intercalate)
+import Data.Maybe (maybe)
 
 newtype Prog = Prog [Decl]
 
 data Decl
   = StmtDecl Stmt
   | VarDecl Ident (Maybe Expr)
+  | FunDecl Ident [Ident] Stmt
 
 data Stmt
   = ExprStmt Expr
@@ -57,9 +57,12 @@ instance Show Decl where
   show (StmtDecl stmt) = show stmt
   show (VarDecl var init) = "var " ++ show var ++ initval ++ ";"
     where
-      initval = case init of
-        Just expr -> " = " ++ show expr
-        Nothing -> ""
+      initval = maybe "" (\e -> " = " ++ show e) init
+  show (FunDecl name parms body) = part1 ++ part2
+    where
+      parms' = intercalate ", " $ show <$> parms
+      part1 = "fun " ++ show name ++ " (" ++ parms' ++ ")"
+      part2 = pad $ show body
 
 instance Show Stmt where
   show (ExprStmt e) = show e ++ ";"
@@ -92,7 +95,7 @@ instance Show Expr where
   show (LiteralExpr lit) = show lit
   show (CallExpr func args) = show func ++ "(" ++ callArgs ++ ")"
     where
-      callArgs = intercalate "," $ show <$> args
+      callArgs = intercalate ", " $ show <$> args
   show (UnaryExpr op e) = "(" ++ show op ++ " " ++ show e ++ ")"
   show (BinaryExpr op l r) = "(" ++ show l ++ " " ++ show op ++ " " ++ show r ++ ")"
   show (AsgnExpr id e) = show id ++ " = " ++ show e

@@ -63,28 +63,8 @@ callP =
     p <- primaryP
     argsLPar <- peek
     if S.tokType argsLPar == S.LEFT_PAREN
-      then consume >> CallExpr p <$> argsP
+      then CallExpr p <$> groupedP (commaSepP exprP)
       else pure p
-  where
-    argsP = do
-      p <- peek
-      if S.tokType p == S.RIGHT_PAREN
-        then consume $> []
-        else do
-          head <- exprP
-          rest <- parseRest []
-          pure $ head : rest
-    parseRest acc = do
-      p <- peek
-      case S.tokType p of
-        S.COMMA -> do
-          consume
-          e <- exprP
-          parseRest $ acc ++ [e]
-        S.RIGHT_PAREN -> do
-          consume
-          pure acc
-        _ -> failP "error while parsing arguments"
 
 -- | primary        → NUMBER | STRING | "true" | "false" | "nil" | "(" expression ")" ;
 primaryP = numberP `orElse` stringP `orElse` boolP `orElse` nilP `orElse` groupedP exprP `orElse` identRefP `orElse` failP "no primary expression"
@@ -163,18 +143,22 @@ blockStP = takeType S.LEFT_BRACE *> (BlockStmt <$> many declP) <* takeType S.RIG
 -- | expressionStmt -> expression ";"
 exprStP = ExprStmt <$> exprP <* semicolonP
 
-varDeclP :: Parser Decl
+declP, varDeclP, funDeclP :: Parser Decl
 varDeclP = VarDecl <$> var <*> init'
   where
     var = takeType S.VAR *> identP
     init = takeType S.EQUAL *> exprP
     init' = fmap Just init `orElse` pure Nothing
-
-declP :: Parser Decl
-declP = var `orElse` stmt
+funDeclP = FunDecl <$> fn <*> args <*> body
+  where
+    fn = takeType S.FUN *> identP
+    args = groupedP $ commaSepP identP
+    body = blockStP
+declP = var `orElse` fun `orElse` stmt
   where
     stmt = StmtDecl <$> stmtP
     var = varDeclP <* semicolonP
+    fun = funDeclP
 
 progP :: Parser Prog
 progP = Prog <$> decls
@@ -201,16 +185,28 @@ peek = Parser $ \toks -> case toks of
   (t : _) -> (Right t, toks)
   [] -> (Left $ ParseErr "token stream ended", [])
 
+-- | peek the next token and check if a predicate is satisfied
+peekCheck :: (S.Type -> Bool) -> ErrMsg -> Parser S.Token
+peekCheck pred err = do
+  token <- peek
+  if pred $ S.tokType token
+    then pure token
+    else failP err
+
+-- | peek a token of a given type
+peekType :: S.Type -> Parser S.Token
+peekType t = peekCheck (== t) $ "expecting a " ++ show t
+
 -- | consume a token
-consume :: Parser ()
-consume = Parser $ \toks -> (Right (), tail toks)
+consume :: Parser S.Token
+consume = Parser $ \(t : toks) -> (Right t, toks)
 
 -- | consume a token and check if a predicate on the token type is satisfied
 takeCheck :: (S.Type -> Bool) -> ErrMsg -> Parser S.Token
 takeCheck pred err = do
   token <- peek
   checkP (pred $ S.tokType token) err
-  consume $> token
+  consume
 
 -- | consume a token and check if the token type matches with the provided type
 takeType :: S.Type -> Parser S.Token
@@ -288,4 +284,9 @@ chainP leaveP connP = leaveP >>= chain
         `orElse` pure lhs
 
 many :: Parser a -> Parser [a]
-many p = (:) <$> p <*> many p `orElse` pure []
+many p = ((:) <$> p <*> many p) `orElse` pure []
+
+commaSepP :: Parser a -> Parser [a]
+commaSepP unit = nonEmpty `orElse` pure []
+  where
+    nonEmpty = (:) <$> unit <*> many (takeType S.COMMA *> unit)

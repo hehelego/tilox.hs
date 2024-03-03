@@ -15,14 +15,16 @@ import Control.Monad (void, when, (>=>))
 import Control.Monad.IO.Class (MonadIO (liftIO))
 import Data.Bifunctor (first)
 import Data.Functor (($>))
-import Data.Maybe (fromMaybe, isJust)
+import Data.Maybe (fromJust, fromMaybe, isJust)
 import GHC.Clock (getMonotonicTime)
 
 data ValType = NilT | BoolT | NumberT | StringT | FuncT deriving (Eq)
 
-type ObjectId = Int
+type Signature = AST.Ident
 
-data Val = Nil | Bool Bool | Number Double | String String | Func ObjectId Int ([Val] -> VMstate Val)
+type Arity = Int
+
+data Val = Nil | Bool Bool | Number Double | String String | Func Signature Arity ([Val] -> VMstate Val)
 
 instance Eq Val where
   x == y = case (x, y) of
@@ -30,7 +32,7 @@ instance Eq Val where
     (Bool b, Bool b') -> b == b'
     (Number n, Number n') -> n == n'
     (String s, String s') -> s == s'
-    (Func id _ _, Func id' _ _) -> id == id'
+    (Func sig _ _, Func sig' _ _) -> sig == sig'
     _ -> False
 
 typeof :: Val -> ValType
@@ -70,13 +72,15 @@ data Env = Env
 initEnv =
   Env
     { assgn =
-        [ (AST.Ident "clock", Func 0 0 _getClock),
-          (AST.Ident "print", Func 1 1 _printVal),
-          (AST.Ident "strcat", Func 2 2 _strcat),
-          (AST.Ident "toString", Func 3 1 _toStr)
+        [ fun "clock" 0 _getClock,
+          fun "print" 1 _printVal,
+          fun "strcat" 2 _strcat,
+          fun "toString" 1 _toStr
         ],
       parent = Nothing
     }
+  where
+    fun name arity f = let id = AST.Ident name in (id, Func id arity f)
 
 _getClock :: a -> VMstate Val
 _getClock = const $ liftIO $ Number <$> getMonotonicTime
@@ -136,6 +140,7 @@ runProg (AST.Prog decls) = runDecls decls
 runDecl :: AST.Decl -> VMstate ()
 runDecl (AST.StmtDecl stmt) = runStmt stmt
 runDecl (AST.VarDecl var init) = runVarDecl var init
+runDecl (AST.FunDecl name parms body) = runFunDecl name parms body
 
 runStmt :: AST.Stmt -> VMstate ()
 runStmt AST.EmptyStmt = pure ()
@@ -161,10 +166,12 @@ runITE cond brT brF = do
   let br = if c then brT else brF
   runStmt $ AST.BlockStmt [AST.StmtDecl br]
 
-runNested r = do
+runNested :: VMstate a -> VMstate a
+runNested run = do
   modify envPush
-  r
-  modify $ \env -> fromMaybe env (envPop env)
+  res <- run
+  modify $ fromJust . envPop
+  pure res
 
 runVarDecl :: AST.Ident -> Maybe AST.Expr -> VMstate ()
 runVarDecl id init =
@@ -173,6 +180,20 @@ runVarDecl id init =
     when (assgnHas id $ assgn env) $ raise (AlreadyDeclared id)
     iv <- maybe (pure Nil) eval init
     modify $ envAdd id iv
+
+runFunDecl :: AST.Ident -> [AST.Ident] -> AST.Stmt -> VMstate ()
+runFunDecl name parms body = do
+  env <- get
+  when (assgnHas name $ assgn env) $ raise (AlreadyDeclared name)
+  modify $
+    envAdd name $
+      Func name (length parms) $
+        \args -> runNested $ do
+          foldl (>>) (pure ()) $ zipWith (\p a -> modify $ envAdd p a) parms args
+          runStmt body
+          pure Nil
+
+-- TODO: return statement
 
 evalAssign :: AST.Ident -> AST.Expr -> VMstate ()
 evalAssign id e = do
