@@ -18,7 +18,7 @@ newtype Prog = Prog [Decl]
 data Decl
   = StmtDecl Stmt
   | VarDecl Ident (Maybe Expr)
-  | FunDecl Ident [Ident] Stmt
+  | FunDecl Ident [Ident] [Decl]
 
 data Stmt
   = ExprStmt Expr
@@ -59,11 +59,11 @@ instance Show Decl where
   show (VarDecl var init) = "var " ++ show var ++ initval ++ ";"
     where
       initval = maybe "" (\e -> " = " ++ show e) init
-  show (FunDecl name parms body) = part1 ++ part2
+  show (FunDecl name parms body) = part1 ++ "\n" ++ part2
     where
       parms' = intercalate ", " $ show <$> parms
       part1 = "fun " ++ show name ++ " (" ++ parms' ++ ")"
-      part2 = pad $ show body
+      part2 = pad $ show $ BlockStmt body
 
 instance Show Stmt where
   show (ExprStmt e) = show e ++ ";"

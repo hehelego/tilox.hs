@@ -133,11 +133,11 @@ type VMstate a = State Env Err a
 run :: Env -> AST.Prog -> IO (Either Err (), Env)
 run env prog = runState (runProg prog) env
 
+runSeq :: [VMstate ()] -> VMstate ()
+runSeq = foldl (>>) $ pure ()
+
 runDecls :: [AST.Decl] -> VMstate ()
-runDecls decls = foldl (>>) init decls'
-  where
-    init = pure ()
-    decls' = runDecl <$> decls
+runDecls decls = runSeq $ runDecl <$> decls
 
 runProg :: AST.Prog -> VMstate ()
 runProg (AST.Prog decls) = runDecls decls
@@ -189,7 +189,7 @@ runVarDecl id init =
     iv <- maybe (pure Nil) eval init
     modify $ envAdd id iv
 
-runFunDecl :: AST.Ident -> [AST.Ident] -> AST.Stmt -> VMstate ()
+runFunDecl :: AST.Ident -> [AST.Ident] -> [AST.Decl] -> VMstate ()
 runFunDecl name parms body = do
   env <- get
   when (assgnHas name $ assgn env) $ raise (AlreadyDeclared name)
@@ -198,12 +198,10 @@ runFunDecl name parms body = do
       Func name (length parms) f
   where
     f args = runNested $ do
-      -- eval arguments
-      foldl (>>) (pure ()) $
-        zipWith ((modify .) . envAdd) parms args
-      -- run function body
-      let AST.BlockStmt body' = body
-      runDecls body'
+      -- set parameters
+      runSeq $ zipWith (\parm arg -> modify $ envAdd parm arg) parms args
+      -- run the function body
+      runDecls body
       -- get the return value
       fromMaybe Nil . ret <$> get
 

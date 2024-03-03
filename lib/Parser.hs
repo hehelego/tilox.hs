@@ -63,7 +63,7 @@ callP =
     p <- primaryP
     foldlP invokeP CallExpr p
   where
-      invokeP = groupedP $ commaSepP exprP
+    invokeP = groupedP $ commaSepP exprP
 
 -- | primary        → NUMBER | STRING | "true" | "false" | "nil" | "(" expression ")" ;
 primaryP = numberP `orElse` stringP `orElse` boolP `orElse` nilP `orElse` groupedP exprP `orElse` identRefP `orElse` failP "no primary expression"
@@ -108,6 +108,7 @@ semicolonP = takeType S.SEMICOLON $> ()
 stmtP, emptyStP, exprStP, blockStP, ifP, whileP, forP, returnP :: Parser Stmt
 stmtP = emptyStP `orElse` blockStP `orElse` ifP `orElse` forP `orElse` whileP `orElse` returnP `orElse` exprStP
 emptyStP = semicolonP $> EmptyStmt
+blockStP = BlockStmt <$> blockP
 ifP = do
   takeType S.IF
   cond <- groupedP exprP
@@ -138,7 +139,8 @@ forP = do
 returnP = fmap ReturnStmt $ takeType S.RETURN *> exprP <* semicolonP
 
 -- | block -> { decl* }
-blockStP = takeType S.LEFT_BRACE *> (BlockStmt <$> many declP) <* takeType S.RIGHT_BRACE
+blockP :: Parser [Decl]
+blockP = takeType S.LEFT_BRACE *> many declP <* takeType S.RIGHT_BRACE
 
 -- | expressionStmt -> expression ";"
 exprStP = ExprStmt <$> exprP <* semicolonP
@@ -153,7 +155,7 @@ funDeclP = FunDecl <$> fn <*> args <*> body
   where
     fn = takeType S.FUN *> identP
     args = groupedP $ commaSepP identP
-    body = blockStP
+    body = blockP
 declP = var `orElse` fun `orElse` stmt
   where
     stmt = StmtDecl <$> stmtP
