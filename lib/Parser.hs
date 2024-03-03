@@ -61,10 +61,9 @@ unaryP = (unaryOpP <*> unaryP) `orElse` callP `orElse` failP "no unary expressio
 callP =
   do
     p <- primaryP
-    argsLPar <- peek
-    if S.tokType argsLPar == S.LEFT_PAREN
-      then CallExpr p <$> groupedP (commaSepP exprP)
-      else pure p
+    foldlP invokeP CallExpr p
+  where
+      invokeP = groupedP $ commaSepP exprP
 
 -- | primary        → NUMBER | STRING | "true" | "false" | "nil" | "(" expression ")" ;
 primaryP = numberP `orElse` stringP `orElse` boolP `orElse` nilP `orElse` groupedP exprP `orElse` identRefP `orElse` failP "no primary expression"
@@ -271,6 +270,14 @@ orElse :: Parser a -> Parser a -> Parser a
 p `orElse` q = Parser $ \toks -> case runParser p toks of
   (Left e, toks') -> if toks == toks' then runParser q toks else (Left e, toks')
   (Right x, toks') -> (Right x, toks')
+
+foldlP :: Parser a -> (b -> a -> b) -> b -> Parser b
+foldlP unit combine init =
+  ( do
+      fst <- unit
+      foldlP unit combine $ combine init fst
+  )
+    `orElse` pure init
 
 -- | Parse an expression tree
 chainP :: Parser a -> Parser (a -> a -> a) -> Parser a

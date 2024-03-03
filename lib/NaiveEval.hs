@@ -66,8 +66,12 @@ assgnUpd id nv = map $ \(x, v) -> (x, if x == id then nv else v)
 
 data Env = Env
   { assgn :: Assignment,
+    ret :: Maybe Val,
     parent :: Maybe Env
   }
+
+setRet :: Val -> Env -> Env
+setRet val env = env {ret = Just val}
 
 initEnv =
   Env
@@ -77,6 +81,7 @@ initEnv =
           fun "strcat" 2 _strcat,
           fun "toString" 1 _toStr
         ],
+      ret = Nothing,
       parent = Nothing
     }
   where
@@ -101,28 +106,27 @@ envLookup id env = if isJust cur then cur else par
     par = parent env >>= envLookup id
 
 envModify :: AST.Ident -> Val -> Env -> Env
-envModify id v env@(Env assgn parent) =
-  if assgnHas id assgn
-    then env {assgn = assgnUpd id v assgn}
-    else env {parent = envModify id v <$> parent}
+envModify id v env =
+  if assgnHas id $ assgn env
+    then env {assgn = assgnUpd id v $ assgn env}
+    else env {parent = envModify id v <$> parent env}
 
 envAdd :: AST.Ident -> Val -> Env -> Env
 envAdd id val env = env {assgn = (id, val) : assgn env}
 
 envPush :: Env -> Env
-envPush env = Env {assgn = [], parent = Just env}
+envPush env = Env {assgn = [], ret = Nothing, parent = Just env}
 
 envPop :: Env -> Maybe Env
 envPop = parent
 
-data Err = TypeMismatch {expectedT :: ValType, actualT :: ValType} | NotInScope {referred :: AST.Ident} | AlreadyDeclared {redef :: AST.Ident} | ArityMisMatch {expectedArgs :: Int, actualArgs :: Int} | Returning Val
+data Err = TypeMismatch {expectedT :: ValType, actualT :: ValType} | NotInScope {referred :: AST.Ident} | AlreadyDeclared {redef :: AST.Ident} | ArityMisMatch {expectedArgs :: Int, actualArgs :: Int}
 
 instance Show Err where
   show (TypeMismatch expect actual) = "ERROR: type miss match," ++ "expected " ++ show expect ++ "actual " ++ show actual
   show (NotInScope ref) = "ERROR: " ++ show ref ++ " not in scope"
   show (AlreadyDeclared ref) = "ERROR: " ++ show ref ++ " is already defined"
   show (ArityMisMatch expect actual) = "ERROR: expecting " ++ show expect ++ "args but given " ++ show actual
-  show (Returning v) = "Returning value to caller: " ++ show v
 
 type VMstate a = State Env Err a
 
@@ -161,8 +165,8 @@ runStmt (AST.WhileStmt cond body) = loop
       when ok $ runStmt body >> loop
 runStmt (AST.BlockStmt ss) = runNested $ runDecls ss
 runStmt (AST.ReturnStmt e) = do
-  v <- eval e
-  raise $ Returning v
+  ret <- eval e
+  modify $ setRet ret
 
 runITE :: AST.Expr -> AST.Stmt -> AST.Stmt -> VMstate ()
 runITE cond brT brF = do
@@ -193,22 +197,15 @@ runFunDecl name parms body = do
     envAdd name $
       Func name (length parms) f
   where
-    f args = getRet $ exec args
-    getRet st = State $ \s -> do
-      res <- runState st s
-      case res of
-        -- pop env haven't been done yet
-        (Left (Returning rv), s') -> pure (Right rv, fromJust $ envPop s')
-        -- leave as it
-        (Left e, s') -> pure (Left e, s')
-        (Right _, s') -> pure (Right Nil, s')
-    exec args = runNested $ do
-      foldl (>>) (pure ()) $ zipWith (\p a -> modify $ envAdd p a) parms args
-      env <- get
+    f args = runNested $ do
+      -- eval arguments
+      foldl (>>) (pure ()) $
+        zipWith ((modify .) . envAdd) parms args
+      -- run function body
       let AST.BlockStmt body' = body
       runDecls body'
-
--- TODO: return statement
+      -- get the return value
+      fromMaybe Nil . ret <$> get
 
 evalAssign :: AST.Ident -> AST.Expr -> VMstate ()
 evalAssign id e = do
