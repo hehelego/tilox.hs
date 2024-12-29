@@ -1,5 +1,5 @@
-module NaiveEval
-  ( ValType (..),
+module NaiveEval (
+    ValType (..),
     Val (..),
     Env (..),
     VMstate (..),
@@ -7,9 +7,19 @@ module NaiveEval
     runProg,
     runState,
     initEnv,
-  )
+)
 where
 
+import AST (
+    BinaryOp (..),
+    Decl (..),
+    Expr (..),
+    Ident (..),
+    Literal,
+    Prog (..),
+    Stmt (..),
+    UnaryOp (..),
+ )
 import qualified AST
 import Control.Monad (void, when, (>=>))
 import Control.Monad.IO.Class (MonadIO (liftIO))
@@ -17,269 +27,313 @@ import Data.Bifunctor (first)
 import Data.Functor (($>))
 import Data.Maybe (fromJust, fromMaybe, isJust)
 import GHC.Clock (getMonotonicTime)
+import qualified PList
 
 data ValType = NilT | BoolT | NumberT | StringT | FuncT deriving (Eq)
 
-type Signature = AST.Ident
-
 type Arity = Int
+type ScopePtr = PList.Addr
 
-data Val = Nil | Bool Bool | Number Double | String String | Func Signature Arity ([Val] -> VMstate Val)
+data Val = Nil | Bool Bool | Number Double | String String | Func ScopePtr Ident Arity ([Val] -> VMstate Val)
 
 instance Eq Val where
-  x == y = case (x, y) of
-    (Nil, Nil) -> True
-    (Bool b, Bool b') -> b == b'
-    (Number n, Number n') -> n == n'
-    (String s, String s') -> s == s'
-    (Func sig _ _, Func sig' _ _) -> sig == sig'
-    _ -> False
+    x == y = case (x, y) of
+        (Nil, Nil) -> True
+        (Bool b, Bool b') -> b == b'
+        (Number n, Number n') -> n == n'
+        (String s, String s') -> s == s'
+        (Func scope sig _ _, Func scope' sig' _ _) -> scope == scope && sig == sig'
+        _ -> False
 
 typeof :: Val -> ValType
 typeof Nil = NilT
 typeof (Bool _) = BoolT
 typeof (Number _) = NumberT
 typeof (String _) = StringT
-typeof (Func {}) = FuncT
+typeof (Func{}) = FuncT
 
 instance Show ValType where
-  show NilT = "[type: nil]"
-  show BoolT = "[type: bool]"
-  show NumberT = "[type: number]"
-  show StringT = "[type: string]"
-  show FuncT = "[type: function]"
+    show NilT = "[type: nil]"
+    show BoolT = "[type: bool]"
+    show NumberT = "[type: number]"
+    show StringT = "[type: string]"
+    show FuncT = "[type: function]"
 
 instance Show Val where
-  show Nil = "nil"
-  show (Bool b) = if b then "true" else "false"
-  show (Number n) = show n
-  show (String s) = s
-  show (Func id _ _) = "<Func: id=" ++ show id ++ ">"
+    show Nil = "nil"
+    show (Bool b) = if b then "true" else "false"
+    show (Number n) = show n
+    show (String s) = s
+    show (Func scope name _ _) = "<Func@" ++ show scope ++ " :" ++ show name ++ ">"
 
-type Assignment = [(AST.Ident, Val)]
+type Assoc k v = [(k, v)]
 
-assgnHas :: AST.Ident -> Assignment -> Bool
-assgnHas id assgn = isJust $ lookup id assgn
+assocUpd :: (Eq k) => k -> v -> Assoc k v -> Assoc k v
+assocUpd k nv [] = []
+assocUpd k nv ((x, v) : assoc) =
+    if k == x
+        then (x, nv) : assoc
+        else (x, v) : assocUpd k nv assoc
 
-assgnUpd :: AST.Ident -> Val -> Assignment -> Assignment
-assgnUpd id nv = map $ \(x, v) -> (x, if x == id then nv else v)
+assocHasKey :: (Eq k) => k -> Assoc k v -> Bool
+assocHasKey k assoc = k `elem` (fst <$> assoc)
 
-data Env = Env
-  { assgn :: Assignment,
-    ret :: Maybe Val,
-    parent :: Maybe Env
-  }
+type Env = PList.List (Assoc Ident Val)
 
-setRet :: Val -> Env -> Env
-setRet val env = env {ret = Just val}
+inActiveScope :: Ident -> Env -> Bool
+inActiveScope id env = assocHasKey id $ PList.this $ PList.getActive env
 
-initEnv =
-  Env
-    { assgn =
-        [ fun "clock" 0 _getClock,
-          fun "print" 1 _printVal,
-          fun "strcat" 2 _strcat,
-          fun "toString" 1 _toStr
-        ],
-      ret = Nothing,
-      parent = Nothing
-    }
+orElse :: Maybe a -> Maybe a -> Maybe a
+orElse (Just x) _ = Just x
+orElse Nothing y = y
+
+envCurScope :: Env -> ScopePtr
+envCurScope = PList.active
+
+envJump :: ScopePtr -> Env -> Env
+envJump scope env = env{PList.active = scope}
+
+envLookup :: Ident -> Env -> Maybe Val
+envLookup id env = find $ PList.getActive env
   where
-    fun name arity f = let id = AST.Ident name in (id, Func id arity f)
+    find (PList.Node prev this) = lookup id this `orElse` findPar prev
+    findPar prev = do
+        addr <- prev
+        find $ PList.get addr env
 
-_getClock :: a -> VMstate Val
-_getClock = const $ liftIO $ Number <$> getMonotonicTime
-
-_printVal :: [Val] -> VMstate Val
-_printVal (v : _) = liftIO $ print v $> Nil
-
-_strcat :: [Val] -> VMstate Val
-_strcat (s1 : s2 : _) = fmap String $ (++) <$> unwrapString s1 <*> unwrapString s2
-
-_toStr :: [Val] -> VMstate Val
-_toStr (v : _) = pure $ String $ show v
-
-envLookup :: AST.Ident -> Env -> Maybe Val
-envLookup id env = if isJust cur then cur else par
-  where
-    cur = lookup id $ assgn env
-    par = parent env >>= envLookup id
-
-envModify :: AST.Ident -> Val -> Env -> Env
+envModify :: Ident -> Val -> Env -> Env
 envModify id v env =
-  if assgnHas id $ assgn env
-    then env {assgn = assgnUpd id v $ assgn env}
-    else env {parent = envModify id v <$> parent env}
+    let top = envCurScope env
+        addr = fromJust $ find top $ PList.get top env
+     in PList.upd addr upd env
+  where
+    find addr (PList.Node prev this) =
+        if assocHasKey id this
+            then Just addr
+            else findPar prev
+    findPar prev = do
+        addr <- prev
+        find addr $ PList.get addr env
+    upd = assocUpd id v
 
-envAdd :: AST.Ident -> Val -> Env -> Env
-envAdd id val env = env {assgn = (id, val) : assgn env}
+envBind :: Ident -> Val -> Env -> Env
+envBind id val = PList.updActive ((id, val) :)
 
 envPush :: Env -> Env
-envPush env = Env {assgn = [], ret = Nothing, parent = Just env}
+envPush = PList.push []
 
 envPop :: Env -> Maybe Env
-envPop = parent
+envPop = PList.pop
 
-data Err = TypeMismatch {expectedT :: ValType, actualT :: ValType} | NotInScope {referred :: AST.Ident} | AlreadyDeclared {redef :: AST.Ident} | ArityMisMatch {expectedArgs :: Int, actualArgs :: Int}
+initEnv :: Env
+initEnv =
+    PList.singleton
+        [ fun "clock" 0 clock
+        , fun "print" 1 print'
+        , fun "strcat" 2 strcat
+        , fun "toString" 1 toString
+        ]
+  where
+    rootScope = 0
+    fun name arity f = let id = Ident name in (id, Func rootScope id arity f)
+
+    clock :: a -> VMstate Val
+    clock = const $ liftIO $ Number <$> getMonotonicTime
+
+    print' :: [Val] -> VMstate Val
+    print' (v : _) = liftIO $ print v $> Nil
+
+    strcat :: [Val] -> VMstate Val
+    strcat (s1 : s2 : _) = fmap String $ (++) <$> unwrapString s1 <*> unwrapString s2
+
+    toString :: [Val] -> VMstate Val
+    toString (v : _) = pure $ String $ show v
+
+data Err = TypeMismatch {expectedT :: ValType, actualT :: ValType} | NotInScope {referred :: Ident} | AlreadyDeclared {redef :: Ident} | ArityMisMatch {expectedArgs :: Int, actualArgs :: Int}
 
 instance Show Err where
-  show (TypeMismatch expect actual) = "ERROR: type miss match," ++ "expected " ++ show expect ++ "actual " ++ show actual
-  show (NotInScope ref) = "ERROR: " ++ show ref ++ " not in scope"
-  show (AlreadyDeclared ref) = "ERROR: " ++ show ref ++ " is already defined"
-  show (ArityMisMatch expect actual) = "ERROR: expecting " ++ show expect ++ "args but given " ++ show actual
+    show (TypeMismatch expect actual) = "ERROR: type miss match," ++ "expected " ++ show expect ++ "actual " ++ show actual
+    show (NotInScope ref) = "ERROR: " ++ show ref ++ " not in scope"
+    show (AlreadyDeclared ref) = "ERROR: " ++ show ref ++ " is already defined"
+    show (ArityMisMatch expect actual) = "ERROR: expecting " ++ show expect ++ "args but given " ++ show actual
 
 type VMstate a = State Env Err a
 
-run :: Env -> AST.Prog -> IO (Either Err (), Env)
+{- | represent the control flow direction
+ - Left: return with value
+ - Right: continue with value
+-}
+type ContOrRet = Either Val Val
+
+run :: Env -> Prog -> IO (Either Err Val, Env)
 run env prog = runState (runProg prog) env
 
-runSeq :: [VMstate ()] -> VMstate ()
-runSeq = foldl (>>) $ pure ()
+retNil :: VMstate Val
+retNil = pure Nil
 
-runDecls :: [AST.Decl] -> VMstate ()
+runSeq :: [VMstate Val] -> VMstate Val
+runSeq = foldl (>>) retNil
+
+runDecls :: [Decl] -> VMstate Val
 runDecls decls = runSeq $ runDecl <$> decls
 
-runProg :: AST.Prog -> VMstate ()
-runProg (AST.Prog decls) = runDecls decls
+runProg :: Prog -> VMstate Val
+runProg (Prog decls) = runDecls decls
 
-runDecl :: AST.Decl -> VMstate ()
-runDecl (AST.StmtDecl stmt) = runStmt stmt
-runDecl (AST.VarDecl var init) = runVarDecl var init
-runDecl (AST.FunDecl name parms body) = runFunDecl name parms body
+runDecl :: Decl -> VMstate Val
+runDecl (StmtDecl stmt) = runStmt stmt
+runDecl (VarDecl var init) = runVarDecl var init
+runDecl (FunDecl name parms body) = runFunDecl name parms body
 
-runStmt :: AST.Stmt -> VMstate ()
-runStmt AST.EmptyStmt = pure ()
-runStmt (AST.ExprStmt e) = void $ eval e
-runStmt (AST.IfStmt cond t f) = runITE cond t f
-runStmt (AST.ForStmt init cond next body) = runNested $ do
-  runDecl init
-  loop
+runStmt :: Stmt -> VMstate Val
+runStmt EmptyStmt = retNil
+runStmt (ExprStmt e) = eval e >> retNil
+runStmt (IfStmt cond t f) = runITE cond t f
+runStmt (ForStmt init cond next body) = runNested $ runDecl init >> loop
   where
     loop = do
-      ok <- eval cond >>= unwrapBool
-      when ok $ runStmt body >> runStmt (AST.ExprStmt next) >> loop
-runStmt (AST.WhileStmt cond body) = loop
+        cond <- eval cond
+        continue <- unwrapBool cond
+        if continue
+            then
+                runStmt body >> runStmt (ExprStmt next) >> loop
+            else
+                retNil
+runStmt (WhileStmt cond body) = loop
   where
     loop = do
-      ok <- eval cond >>= unwrapBool
-      when ok $ runStmt body >> loop
-runStmt (AST.BlockStmt ss) = runNested $ runDecls ss
-runStmt (AST.ReturnStmt e) = do
-  ret <- eval e
-  modify $ setRet ret
+        cond <- eval cond
+        continue <- unwrapBool cond
+        if continue
+            then runStmt body >> loop
+            else retNil
+runStmt (BlockStmt ss) = runNested $ runDecls ss
+runStmt (ReturnStmt e) = eval e
 
-runITE :: AST.Expr -> AST.Stmt -> AST.Stmt -> VMstate ()
+runITE :: Expr -> AST.Stmt -> AST.Stmt -> VMstate Val
 runITE cond brT brF = do
-  c <- eval cond >>= unwrapBool
-  let br = if c then brT else brF
-  runStmt $ AST.BlockStmt [AST.StmtDecl br]
+    c <- eval cond >>= unwrapBool
+    let br = if c then brT else brF
+    runStmt $ BlockStmt [AST.StmtDecl br]
 
 runNested :: VMstate a -> VMstate a
 runNested run = do
-  modify envPush
-  res <- run
-  modify $ fromJust . envPop
-  pure res
-
-runVarDecl :: AST.Ident -> Maybe AST.Expr -> VMstate ()
-runVarDecl id init =
-  do
+    modify envPush
+    res <- run
     env <- get
-    when (assgnHas id $ assgn env) $ raise (AlreadyDeclared id)
-    iv <- maybe (pure Nil) eval init
-    modify $ envAdd id iv
+    modify $ fromJust . envPop
+    pure res
 
-runFunDecl :: AST.Ident -> [AST.Ident] -> [AST.Decl] -> VMstate ()
+runVarDecl :: Ident -> Maybe Expr -> VMstate Val
+runVarDecl id init =
+    do
+        env <- get
+        let inScope = inActiveScope id env
+        when inScope $ raise (AlreadyDeclared id)
+        iv <- maybe retNil eval init
+        modify $ envBind id iv
+        retNil
+
+runFunDecl :: Ident -> [Ident] -> [Decl] -> VMstate Val
 runFunDecl name parms body = do
-  env <- get
-  when (assgnHas name $ assgn env) $ raise (AlreadyDeclared name)
-  modify $
-    envAdd name $
-      Func name (length parms) f
+    env <- get
+    let inScope = inActiveScope name env
+    when inScope $ raise (AlreadyDeclared name)
+    let scope = envCurScope env
+    let fn = Func scope name (length parms) f
+    modify $ envBind name fn
+    pure fn
   where
     f args = runNested $ do
-      -- set parameters
-      runSeq $ zipWith (\parm arg -> modify $ envAdd parm arg) parms args
-      -- run the function body
-      runDecls body
-      -- get the return value
-      fromMaybe Nil . ret <$> get
+        -- set parameters
+        runSeq $ zipWith evalParm parms args
+        -- run the function body, and return the last value
+        runDecls body
 
-evalAssign :: AST.Ident -> AST.Expr -> VMstate ()
+    evalParm parm arg = modify (envBind parm arg) >> retNil
+
+evalAssign :: Ident -> Expr -> VMstate Val
 evalAssign id e = do
-  env <- get
-  if isJust $ envLookup id env
-    then eval e >>= modify . envModify id
-    else raise $ NotInScope id
+    env <- get
+    if isJust $ envLookup id env
+        then do
+            v <- eval e
+            modify $ envModify id v
+            pure v
+        else raise $ NotInScope id
 
 unwrapBool :: Val -> VMstate Bool
 unwrapBool (Bool b) = pure b
-unwrapBool x = raise $ TypeMismatch {expectedT = BoolT, actualT = typeof x}
+unwrapBool x = raise TypeMismatch{expectedT = BoolT, actualT = typeof x}
 
 unwrapNum :: Val -> VMstate Double
 unwrapNum (Number n) = pure n
-unwrapNum x = raise $ TypeMismatch {expectedT = NumberT, actualT = typeof x}
+unwrapNum x = raise TypeMismatch{expectedT = NumberT, actualT = typeof x}
 
 unwrapString :: Val -> VMstate String
 unwrapString (String s) = pure s
-unwrapString x = raise $ TypeMismatch {expectedT = StringT, actualT = typeof x}
+unwrapString x = raise TypeMismatch{expectedT = StringT, actualT = typeof x}
 
-unwrapNil :: Val -> VMstate ()
-unwrapNil Nil = pure ()
-unwrapNil x = raise $ TypeMismatch {expectedT = NilT, actualT = typeof x}
+unwrapNil :: Val -> VMstate Val
+unwrapNil Nil = retNil
+unwrapNil x = raise TypeMismatch{expectedT = FuncT, actualT = typeof x}
 
-eval :: AST.Expr -> VMstate Val
-eval (AST.LiteralExpr lit) = evalLiteral lit
-eval (AST.UnaryExpr uop sub) = evalUnary uop sub
-eval (AST.BinaryExpr bop lhs rhs) = evalBinary bop lhs rhs
-eval (AST.AsgnExpr id e) = evalAssign id e $> Nil
-eval (AST.CallExpr func args) = evalCall func args
+unwrapFunc :: Val -> VMstate (ScopePtr, Ident, Arity, [Val] -> VMstate Val)
+unwrapFunc (Func scope name arity f) = pure (scope, name, arity, f)
+unwrapFunc x = raise TypeMismatch{expectedT = NilT, actualT = typeof x}
 
-evalLiteral :: AST.Literal -> VMstate Val
+eval :: Expr -> VMstate Val
+eval (LiteralExpr lit) = evalLiteral lit
+eval (UnaryExpr uop sub) = evalUnary uop sub
+eval (BinaryExpr bop lhs rhs) = evalBinary bop lhs rhs
+eval (AsgnExpr id e) = evalAssign id e $> Nil
+eval (CallExpr func args) = evalCall func args
+
+evalLiteral :: Literal -> VMstate Val
 evalLiteral (AST.Ref ident) = do
-  env <- get
-  case envLookup ident env of
-    Just v -> pure v
-    Nothing -> raise $ NotInScope ident
+    env <- get
+    case envLookup ident env of
+        Just v -> pure v
+        Nothing -> raise $ NotInScope ident
 evalLiteral (AST.Number n) = pure $ Number n
 evalLiteral (AST.String s) = pure $ String s
 evalLiteral (AST.Bool b) = pure $ Bool b
-evalLiteral AST.Nil = pure Nil
+evalLiteral AST.Nil = retNil
 
-evalUnary :: AST.UnaryOp -> AST.Expr -> VMstate Val
+evalUnary :: UnaryOp -> AST.Expr -> VMstate Val
 evalUnary op sub = eval sub >>= opfunc op
   where
-    opfunc :: AST.UnaryOp -> Val -> VMstate Val
+    opfunc :: UnaryOp -> Val -> VMstate Val
     opfunc op = case op of
-      AST.Neg -> negf
-      AST.Not -> notf
+        Neg -> negf
+        Not -> notf
     notf v = Bool . not <$> unwrapBool v
     negf v = Number . (0 -) <$> unwrapNum v
 
-evalBinary :: AST.BinaryOp -> AST.Expr -> AST.Expr -> VMstate Val
+evalBinary :: BinaryOp -> AST.Expr -> AST.Expr -> VMstate Val
 evalBinary op lhs rhs = do
-  lv <- eval lhs
-  rv <- eval rhs
-  opfunc op lv rv
+    lv <- eval lhs
+    rv <- eval rhs
+    opfunc op lv rv
   where
-    opfunc :: AST.BinaryOp -> Val -> Val -> VMstate Val
+    opfunc :: BinaryOp -> Val -> Val -> VMstate Val
     opfunc op = case op of
-      AST.Eq -> eq
-      AST.Neq -> neq
-      AST.Lt -> lt
-      AST.Leq -> leq
-      AST.Gt -> gt
-      AST.Geq -> geq
-      AST.Plus -> plus
-      AST.Minus -> minus
-      AST.Times -> times
-      AST.Divides -> divides
-      AST.And -> and
-      AST.Or -> or
+        Eq -> eq
+        Neq -> neq
+        Lt -> lt
+        Leq -> leq
+        Gt -> gt
+        Geq -> geq
+        Plus -> plus
+        Minus -> minus
+        Times -> times
+        Divides -> divides
+        And -> and
+        Or -> or
     makeop lift unwrap op l r = do
-      lv <- unwrap l
-      rv <- unwrap r
-      pure $ lift $ op lv rv
+        lv <- unwrap l
+        rv <- unwrap r
+        pure $ lift $ op lv rv
     eq = makeop Bool pure (==)
     neq = makeop Bool pure (/=)
     lt = makeop Bool unwrapNum (<)
@@ -293,45 +347,54 @@ evalBinary op lhs rhs = do
     and = makeop Bool unwrapBool (&&)
     or = makeop Bool unwrapBool (||)
 
-evalCall :: AST.Expr -> [AST.Expr] -> VMstate Val
+evalCall :: Expr -> [AST.Expr] -> VMstate Val
 evalCall func args = do
-  f <- eval func
-  let argsCnt = length args
-  case f of
-    Func _ arity body ->
-      if argsCnt == arity
-        then mapM eval args >>= body
-        else raise $ ArityMisMatch {expectedArgs = arity, actualArgs = argsCnt}
-    _ -> raise $ TypeMismatch {expectedT = FuncT, actualT = typeof f}
+    f <- eval func
+    (scope, name, arity, body) <- unwrapFunc f
+    let cnt = length args
+    if arity /= cnt
+        then raise ArityMisMatch{expectedArgs = arity, actualArgs = cnt}
+        else retNil
 
--- | Stateful computation that may fail and may have side effect
--- s: state
--- e: error
--- a: computation result
+    -- evaluate arguments
+    save <- envCurScope <$> get
+    argVals <- mapM eval args
+    -- run function in the lexical scope where it is declared
+    modify $ envJump scope
+    retVal <- body argVals
+    -- jump back to the saved scope
+    modify $ envJump save
+    pure retVal
+
+{- | Stateful computation that may fail and may have side effect
+s: state
+e: error
+a: computation result
+-}
 newtype State s e a = State {runState :: s -> IO (Either e a, s)}
 
 instance Functor (State s e) where
-  fmap f comp = State $ fmap (first (fmap f)) . runState comp
+    fmap f comp = State $ fmap (first (fmap f)) . runState comp
 
 instance Applicative (State s e) where
-  pure x = State $ \s -> pure (Right x, s)
-  sf <*> sx = State $ runState sf >=> cc
-    where
-      cc res = case res of
-        (Right f, s') -> runState (f <$> sx) s'
-        (Left e, s') -> pure (Left e, s')
+    pure x = State $ \s -> pure (Right x, s)
+    sf <*> sx = State $ runState sf >=> cc
+      where
+        cc res = case res of
+            (Right f, s') -> runState (f <$> sx) s'
+            (Left e, s') -> pure (Left e, s')
 
 instance Monad (State s e) where
-  sx >>= f = State $ runState sx >=> cc
-    where
-      cc res = case res of
-        (Right x, s') -> runState (f x) s'
-        (Left e, s') -> pure (Left e, s')
+    sx >>= f = State $ runState sx >=> cc
+      where
+        cc res = case res of
+            (Right x, s') -> runState (f x) s'
+            (Left e, s') -> pure (Left e, s')
 
 instance MonadIO (State s e) where
-  liftIO io = State $ \s -> do
-    x <- io
-    pure (Right x, s)
+    liftIO io = State $ \s -> do
+        x <- io
+        pure (Right x, s)
 
 get :: State s e s
 get = State $ \s -> pure (Right s, s)
