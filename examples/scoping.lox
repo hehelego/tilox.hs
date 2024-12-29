@@ -1,0 +1,50 @@
+fun hello() {
+    return 1;
+    print("wow after return");
+}
+hello();  // expect: (no output)
+
+print("-----------------");
+
+var a = "hello";
+{
+  print(a); // expect: hello
+  var a = "world";
+  print(a); // expect: world
+}
+print(a); // expect: hello
+
+print("-----------------");
+
+var b = "global";
+{
+  fun showA() {
+    print(b);
+  }
+
+  showA(); // expect: global
+  var b = "block";
+  showA();  // expect: global
+}
+
+print("-----------------");
+
+fun makeCounter() {
+  var i = 0;
+  fun count() {
+    i = i + 1;
+    print(i);
+  }
+
+  return count;
+}
+
+var c1 = makeCounter();
+c1(); // expect: 1
+c1(); // expect: 2
+var c2 = c1;
+c2(); // expect: 3
+c2(); // expect: 4
+var c3 = makeCounter();
+c3(); // expect 1
+c3(); // expect 2
