@@ -1,2 +1,36 @@
-return "a";
-print("b"); // should not be printed
+{
+    print("------ part 1 ------");
+    fun f() {
+        return "a";
+        print("should not print");
+    }
+    f();
+}
+
+{
+    print("------ part 2 ------");
+    fun f() {
+        for(var i=0; true; i=i+1) {
+            if (i > 10) {
+                return 0;
+            }
+        }
+        print("should not print");
+    }
+    f();
+}
+
+{
+    print("------ part 3 ------");
+    fun f() {
+        var i = 0;
+        while (i < 1000) {
+            if (i < 100) { i = i * 2 + 1; }
+            else i = i + 3;
+
+            if (i > 500) { return i; }
+        }
+        print("should not print");
+    }
+    f();
+}

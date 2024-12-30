@@ -214,8 +214,11 @@ runStmt (ForStmt init cond next body) = runNested $ runDecl init >> loop
         cond <- eval cond
         continue <- unwrapBool cond
         if continue
-            then
-                runStmt body >> runStmt (ExprStmt next) >> loop
+            then do
+                v <- runStmt body
+                case dirOf v of
+                    Continue -> runStmt (ExprStmt next) >> loop
+                    Return -> pure v
             else
                 continueWith Nil
 runStmt (WhileStmt cond body) = loop
@@ -224,7 +227,11 @@ runStmt (WhileStmt cond body) = loop
         cond <- eval cond
         continue <- unwrapBool cond
         if continue
-            then runStmt body >> loop
+            then do
+              v <- runStmt body
+              case dirOf v of
+                Continue -> loop
+                Return -> pure v
             else continueWith Nil
 runStmt (BlockStmt ss) = runNested $ runDecls ss
 runStmt (ReturnStmt e) = wrapReturn <$> eval e
