@@ -102,18 +102,18 @@ test = do
       expr <- parseE "true / (nil * 5.0)"
       show expr `shouldBe` "(true / (nil * 5.0))"
 
-    -- TODO: find suitable way to test error handling
+    -- test error handling
     it "parse incomplete binary expression" $ do
       err <- parseE' "1 + "
-      P.errMsg err `shouldSatisfy` const False
+      P.errMsg err `shouldSatisfy` hasPrefix "no factor expression"
       err <- parseE' "+"
-      show err `shouldSatisfy` const False
+      P.errMsg err `shouldSatisfy` hasPrefix "no expression"
       err <- parseE' "3 - 5 * "
-      show err `shouldSatisfy` const False
+      P.errMsg  err `shouldSatisfy` hasPrefix "no unary expression"
       err <- parseE' "nil * "
-      show err `shouldSatisfy` const False
+      P.errMsg  err `shouldSatisfy` hasPrefix "no unary expression"
       err <- parseE' "true / (nil * 5.0"
-      show err `shouldSatisfy` const False
+      P.errMsg err `shouldSatisfy` hasPrefix "expecting a RIGHT_PAREN"
 
     -- TODO: fuzzing testing?
     it "parse complex expression, handling precedence" $ do

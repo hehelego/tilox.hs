@@ -85,7 +85,7 @@ test = describe "Scanner" $ do
                  )
 
   it "recognize keywords" $ do
-    let raw = "class else false for fun if nil not or print return super this true var while"
+    let raw = "class else false for fun if nil not or return super this true var while"
     scan raw
       `shouldBe` ( Right (),
                    [ Token "class" (crng1 1 5) CLASS,
@@ -97,14 +97,13 @@ test = describe "Scanner" $ do
                      Token "nil" (crng1 29 31) NIL,
                      Token "not" (crng1 33 35) NOT,
                      Token "or" (crng1 37 38) OR,
-                     Token "print" (crng1 40 44) PRINT,
-                     Token "return" (crng1 46 51) RETURN,
-                     Token "super" (crng1 53 57) SUPER,
-                     Token "this" (crng1 59 62) THIS,
-                     Token "true" (crng1 64 67) TRUE,
-                     Token "var" (crng1 69 71) VAR,
-                     Token "while" (crng1 73 77) WHILE,
-                     Token "" (crng1 78 78) EOF
+                     Token "return" (crng1 40 45) RETURN,
+                     Token "super" (crng1 47 51) SUPER,
+                     Token "this" (crng1 53 56) THIS,
+                     Token "true" (crng1 58 61) TRUE,
+                     Token "var" (crng1 63 65) VAR,
+                     Token "while" (crng1 67 71) WHILE,
+                     Token "" (crng1 72 72) EOF
                    ]
                  )
 
@@ -125,7 +124,7 @@ test = describe "Scanner" $ do
                  )
 
   it "comprehensive tokenization" $ do
-    let (Right (), toks) = scan "var hello; for(var i=1;i<10;i=i+1) { print i; }"
+    let (Right (), toks) = scan "var hello; for(var i=1;i<10;i=i+1) { print(i); }"
     tokType <$> toks
       `shouldBe` [
                    -- var hello;
@@ -154,10 +153,12 @@ test = describe "Scanner" $ do
                    NUMBER,
                    -- )
                    RIGHT_PAREN,
-                   -- { print i; }
+                   -- { print(i); }
                    LEFT_BRACE,
-                   PRINT,
                    IDENTIFIER,
+                   LEFT_PAREN,
+                   IDENTIFIER,
+                   RIGHT_PAREN,
                    SEMICOLON,
                    RIGHT_BRACE,
                    -- eof

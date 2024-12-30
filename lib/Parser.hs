@@ -254,7 +254,7 @@ instance Functor Parser where
   fmap f p = Parser $ \toks -> fmap f `first` runParser p toks
 
 instance Applicative Parser where
-  pure x = Parser $ \toks -> (Right x, toks)
+  pure x = Parser $ (,) (Right x)
   p <*> q = Parser $ \toks -> case runParser p toks of
     (Left e, toks') -> (Left e, toks')
     (Right f, toks') -> runParser (f <$> q) toks'
