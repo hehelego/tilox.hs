@@ -329,6 +329,18 @@ evalUnary op sub = eval sub >>= opfunc op
     negf v = Number . (0 -) <$> unwrapNum v
 
 evalBinary :: BinaryOp -> AST.Expr -> AST.Expr -> VMstate Val
+evalBinary And lhs rhs = do
+    lv <- eval lhs
+    lb <- unwrapBool lv
+    if not lb
+        then pure $ Bool False
+        else eval rhs >>= (fmap Bool . unwrapBool)
+evalBinary Or lhs rhs = do
+    lv <- eval lhs
+    lb <- unwrapBool lv
+    if lb
+        then pure $ Bool True
+        else eval rhs >>= (fmap Bool . unwrapBool)
 evalBinary op lhs rhs = do
     lv <- eval lhs
     rv <- eval rhs
@@ -346,8 +358,8 @@ evalBinary op lhs rhs = do
         Minus -> minus
         Times -> times
         Divides -> divides
-        And -> and
-        Or -> or
+        And -> error "unreachable"
+        Or -> error "unreachable"
     makeop lift unwrap op l r = do
         lv <- unwrap l
         rv <- unwrap r
@@ -362,8 +374,6 @@ evalBinary op lhs rhs = do
     minus = makeop Number unwrapNum (-)
     times = makeop Number unwrapNum (*)
     divides = makeop Number unwrapNum (/)
-    and = makeop Bool unwrapBool (&&)
-    or = makeop Bool unwrapBool (||)
 
 evalCall :: Expr -> [AST.Expr] -> VMstate Val
 evalCall func args = do

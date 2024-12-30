@@ -1,0 +1,30 @@
+fun const(msg, val) {
+    fun f() {
+        print(msg);
+        return val;
+    }
+    return f;
+}
+
+var f;
+var g;
+
+print("---------- part 1 ----------");
+f = const("get true", true);
+g = const("should not print", true);
+f() or g();
+
+print("---------- part 2 ----------");
+f = const("get false", false);
+g = const("get true", true);
+f() or g();
+
+print("---------- part 3 ----------");
+f = const("get false", false);
+g = const("should not print", true);
+f() and g();
+
+print("---------- part 3 ----------");
+f = const("get true", true);
+g = f;
+f() and g();
