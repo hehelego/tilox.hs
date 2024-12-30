@@ -21,7 +21,7 @@ import AST (
     UnaryOp (..),
  )
 import qualified AST
-import Control.Monad (void, when, (>=>))
+import Control.Monad (when, (>=>))
 import Control.Monad.IO.Class (MonadIO (liftIO))
 import Data.Bifunctor (first)
 import Data.Functor (($>))
@@ -160,34 +160,53 @@ instance Show Err where
 type VMstate a = State Env Err a
 
 {- | represent the control flow direction
- - Left: return with value
- - Right: continue with value
+ - return with value or continue with value
 -}
-type ContOrRet = Either Val Val
+data FlowDirection = Continue | Return deriving (Show, Eq)
 
-run :: Env -> Prog -> IO (Either Err Val, Env)
+newtype Result = Result (FlowDirection, Val) deriving (Show, Eq)
+
+wrapContinue, wrapReturn :: Val -> Result
+wrapContinue x = Result (Continue, x)
+wrapReturn x = Result (Return, x)
+
+continueWith, returnWith :: (Applicative m) => Val -> m Result
+continueWith = pure . wrapContinue
+returnWith = pure . wrapReturn
+
+valueOf :: Result -> Val
+valueOf (Result (_, val)) = val
+
+dirOf :: Result -> FlowDirection
+dirOf (Result (dir, _)) = dir
+
+run :: Env -> Prog -> IO (Either Err Result, Env)
 run env prog = runState (runProg prog) env
 
-retNil :: VMstate Val
-retNil = pure Nil
+runSeq :: [VMstate Result] -> VMstate Result
+runSeq = foldl seq $ continueWith Nil
+  where
+    seq :: VMstate Result -> VMstate Result -> VMstate Result
+    seq acc x = do
+        prev <- acc
+        case dirOf prev of
+            Continue -> x
+            Return -> pure prev
 
-runSeq :: [VMstate Val] -> VMstate Val
-runSeq = foldl (>>) retNil
-
-runDecls :: [Decl] -> VMstate Val
+runDecls :: [Decl] -> VMstate Result
 runDecls decls = runSeq $ runDecl <$> decls
 
-runProg :: Prog -> VMstate Val
+runProg :: Prog -> VMstate Result
 runProg (Prog decls) = runDecls decls
 
-runDecl :: Decl -> VMstate Val
+runDecl :: Decl -> VMstate Result
 runDecl (StmtDecl stmt) = runStmt stmt
 runDecl (VarDecl var init) = runVarDecl var init
 runDecl (FunDecl name parms body) = runFunDecl name parms body
 
-runStmt :: Stmt -> VMstate Val
-runStmt EmptyStmt = retNil
-runStmt (ExprStmt e) = eval e >> retNil
+runStmt :: Stmt -> VMstate Result
+runStmt EmptyStmt = continueWith Nil
+runStmt (ExprStmt e) = wrapContinue <$> eval e
 runStmt (IfStmt cond t f) = runITE cond t f
 runStmt (ForStmt init cond next body) = runNested $ runDecl init >> loop
   where
@@ -198,7 +217,7 @@ runStmt (ForStmt init cond next body) = runNested $ runDecl init >> loop
             then
                 runStmt body >> runStmt (ExprStmt next) >> loop
             else
-                retNil
+                continueWith Nil
 runStmt (WhileStmt cond body) = loop
   where
     loop = do
@@ -206,15 +225,15 @@ runStmt (WhileStmt cond body) = loop
         continue <- unwrapBool cond
         if continue
             then runStmt body >> loop
-            else retNil
+            else continueWith Nil
 runStmt (BlockStmt ss) = runNested $ runDecls ss
-runStmt (ReturnStmt e) = eval e
+runStmt (ReturnStmt e) = wrapReturn <$> eval e
 
-runITE :: Expr -> AST.Stmt -> AST.Stmt -> VMstate Val
+runITE :: Expr -> AST.Stmt -> AST.Stmt -> VMstate Result
 runITE cond brT brF = do
-    c <- eval cond >>= unwrapBool
-    let br = if c then brT else brF
-    runStmt $ BlockStmt [AST.StmtDecl br]
+    cond <- eval cond
+    side <- unwrapBool cond
+    runNested $ runStmt $ if side then brT else brF
 
 runNested :: VMstate a -> VMstate a
 runNested run = do
@@ -224,17 +243,16 @@ runNested run = do
     modify $ fromJust . envPop
     pure res
 
-runVarDecl :: Ident -> Maybe Expr -> VMstate Val
-runVarDecl id init =
-    do
-        env <- get
-        let inScope = inActiveScope id env
-        when inScope $ raise (AlreadyDeclared id)
-        iv <- maybe retNil eval init
-        modify $ envBind id iv
-        retNil
+runVarDecl :: Ident -> Maybe Expr -> VMstate Result
+runVarDecl id init = do
+    env <- get
+    let inScope = inActiveScope id env
+    when inScope $ raise (AlreadyDeclared id)
+    init <- maybe (pure Nil) eval init
+    modify $ envBind id init
+    continueWith Nil
 
-runFunDecl :: Ident -> [Ident] -> [Decl] -> VMstate Val
+runFunDecl :: Ident -> [Ident] -> [Decl] -> VMstate Result
 runFunDecl name parms body = do
     env <- get
     let inScope = inActiveScope name env
@@ -242,15 +260,15 @@ runFunDecl name parms body = do
     let scope = envCurScope env
     let fn = Func scope name (length parms) f
     modify $ envBind name fn
-    pure fn
+    continueWith Nil
   where
     f args = runNested $ do
         -- set parameters
         runSeq $ zipWith evalParm parms args
         -- run the function body, and return the last value
-        runDecls body
+        valueOf <$> runDecls body
 
-    evalParm parm arg = modify (envBind parm arg) >> retNil
+    evalParm parm arg = modify (envBind parm arg) >> continueWith Nil
 
 evalAssign :: Ident -> Expr -> VMstate Val
 evalAssign id e = do
@@ -274,13 +292,13 @@ unwrapString :: Val -> VMstate String
 unwrapString (String s) = pure s
 unwrapString x = raise TypeMismatch{expectedT = StringT, actualT = typeof x}
 
-unwrapNil :: Val -> VMstate Val
-unwrapNil Nil = retNil
-unwrapNil x = raise TypeMismatch{expectedT = FuncT, actualT = typeof x}
+unwrapNil :: Val -> VMstate ()
+unwrapNil Nil = pure ()
+unwrapNil x = raise TypeMismatch{expectedT = NilT, actualT = typeof x}
 
 unwrapFunc :: Val -> VMstate (ScopePtr, Ident, Arity, [Val] -> VMstate Val)
 unwrapFunc (Func scope name arity f) = pure (scope, name, arity, f)
-unwrapFunc x = raise TypeMismatch{expectedT = NilT, actualT = typeof x}
+unwrapFunc x = raise TypeMismatch{expectedT = FuncT, actualT = typeof x}
 
 eval :: Expr -> VMstate Val
 eval (LiteralExpr lit) = evalLiteral lit
@@ -298,7 +316,7 @@ evalLiteral (AST.Ref ident) = do
 evalLiteral (AST.Number n) = pure $ Number n
 evalLiteral (AST.String s) = pure $ String s
 evalLiteral (AST.Bool b) = pure $ Bool b
-evalLiteral AST.Nil = retNil
+evalLiteral AST.Nil = pure Nil
 
 evalUnary :: UnaryOp -> AST.Expr -> VMstate Val
 evalUnary op sub = eval sub >>= opfunc op
@@ -352,10 +370,7 @@ evalCall func args = do
     f <- eval func
     (scope, name, arity, body) <- unwrapFunc f
     let cnt = length args
-    if arity /= cnt
-        then raise ArityMisMatch{expectedArgs = arity, actualArgs = cnt}
-        else retNil
-
+    when (arity /= cnt) $ raise ArityMisMatch{expectedArgs = arity, actualArgs = cnt}
     -- evaluate arguments
     save <- envCurScope <$> get
     argVals <- mapM eval args
